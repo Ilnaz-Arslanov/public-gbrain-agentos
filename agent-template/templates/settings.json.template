@@ -1,0 +1,60 @@
+{
+  "env": {
+    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "400000"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(git *)",
+      "Bash(gh *)",
+      "Bash(npm *)",
+      "Bash(npx *)",
+      "Bash(python3 *)",
+      "Read",
+      "Glob",
+      "Grep"
+    ],
+    "deny": [
+      "Bash(rm -rf /)",
+      "Bash(curl * | bash)",
+      "Bash(sudo *)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${HOME}/.claude-lab/{{AGENT_ID}}/.claude/hooks/session-start-hook.sh",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${HOME}/.claude-lab/{{AGENT_ID}}/.claude/hooks/stop-hook.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${HOME}/.claude-lab/{{AGENT_ID}}/.claude/hooks/precompact-hook.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "gbrain-memory": {
+      "type": "http",
+      "url": "${MCP_HOST}/memory/mcp",
+      "headers": { "Authorization": "Bearer ${INBOX_BEARER}" }
+    },
+    "gbrain-recall": {
+      "type": "http",
+      "url": "${MCP_HOST}/recall/mcp",
+      "headers": { "Authorization": "Bearer ${INBOX_BEARER}" }
+    },
+    "gbrain-swarm": {
+      "type": "http",
+      "url": "${MCP_HOST}/swarm/mcp",
+      "headers": { "Authorization": "Bearer ${INBOX_BEARER}" }
+    }
+  }
+}

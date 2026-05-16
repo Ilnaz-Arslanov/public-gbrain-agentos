@@ -1,0 +1,39 @@
+# inbox-agent URL → type classifier
+#
+# Matched top-down by `save-to-raw.sh`. First match wins. If none match and a
+# URL is present, falls through to `else.url`. If no URL is present at all,
+# uses `else.text`.
+#
+# Edit to add or reorder sources. Patterns are POSIX extended regex applied
+# against the first URL in the forwarded message.
+classifiers:
+  - if: "youtube.com|youtu.be"
+    type: youtube
+    category: article
+    tags: [content, youtube]
+
+  - if: "instagram.com"
+    type: instagram
+    category: article
+    tags: [instagram, content]
+
+  - if: "twitter.com|x.com"
+    type: twitter
+    category: article
+    tags: [twitter, content]
+
+  - if: "reddit.com"
+    type: web
+    category: reference
+    tags: [reddit, research]
+
+  - if: "https?://"
+    type: web
+    category: reference
+    tags: [web, research]
+
+else:
+  text:
+    type: text
+    category: learning
+    tags: [text, research]

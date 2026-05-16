@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gbrain"
+version = "0.1.0"
+description = "Self-hosted MCP-native second brain with hybrid recall and inter-agent triggers."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.11"
+authors = [
+    { name = "gbrain contributors", email = "noreply@gbrain.invalid" },
+]
+keywords = ["mcp", "second-brain", "agents", "rag", "pgvector"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries",
+]
+dependencies = [
+    "fastmcp>=2.0,<3.0",
+    "asyncpg>=0.30,<0.31",
+    "uvicorn[standard]>=0.30,<0.32",
+    "httpx>=0.27,<0.29",
+    "pyyaml>=6.0,<7.0",
+    "pydantic>=2.6,<3.0",
+    "pgvector>=0.3,<0.4",
+    "fastembed>=0.4,<1.0",
+    "numpy>=1.26,<3.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
+
+[project.scripts]
+gbrain-memory-mcp = "services.memory_mcp.server:main"
+gbrain-recall-mcp = "services.recall_mcp.server:main"
+gbrain-swarm-mcp = "services.swarm_mcp.server:main"
+gbrain-swarm-worker = "services.swarm_mcp.worker:main"
+gbrain-ingest-worker = "services.ingest_worker.worker:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["services*"]
+exclude = ["tests*", "migrations*", "scripts*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+markers = [
+    "integration: requires a running Postgres + FastEmbed environment",
+]

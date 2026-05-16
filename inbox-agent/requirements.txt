@@ -1,0 +1,9 @@
+# inbox-agent (local) runtime dependencies.
+#
+# This is separate from the VPS-side requirements.txt at the repo root because
+# inbox-agent installs on your laptop / personal machine, not on the gbrain VPS.
+#
+# Install:
+#   pip install -r inbox-agent/requirements.txt
+#
+python-telegram-bot>=20.0,<22.0

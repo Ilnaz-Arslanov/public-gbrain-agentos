@@ -1,0 +1,36 @@
+[Unit]
+Description=gbrain Recall MCP (read-side)
+After=postgresql.service network.target
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User={{SERVICE_USER}}
+Group={{SERVICE_USER}}
+WorkingDirectory={{INSTALL_DIR}}
+Environment=PYTHONPATH={{INSTALL_DIR}}
+Environment=MCP_PORT=8768
+Environment=FASTEMBED_CACHE_DIR={{STATE_DIR}}/fastembed
+EnvironmentFile={{ETC_DIR}}/secrets.env
+ExecStart={{INSTALL_DIR}}/.venv/bin/python -m services.recall_mcp.server
+Restart=on-failure
+RestartSec=5
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ReadWritePaths={{INSTALL_DIR}}/vault {{LOG_DIR}} {{STATE_DIR}}
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LockPersonality=yes
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+# FastEmbed multilingual-e5-large is ~1.1GB resident + uvicorn overhead.
+MemoryMax=2G
+
+[Install]
+WantedBy=multi-user.target

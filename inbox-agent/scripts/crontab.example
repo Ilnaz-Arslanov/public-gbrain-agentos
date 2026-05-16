@@ -1,0 +1,10 @@
+# inbox-agent crontab — example
+#
+# Edit INBOX_AGENT_HOME, PRINCE_CHAT_ID, MCP_URL paths to match your install.
+# Then `crontab -e` and paste these lines.
+#
+# Every 15 minutes: compile uncompiled raw entries (find | grep is cheap).
+*/15 * * * * INBOX_AGENT_HOME=$HOME/.claude-lab/inbox-agent CLAUDE_BIN=$HOME/.local/bin/claude bash $HOME/.claude-lab/inbox-agent/scripts/compile.sh >> $HOME/.claude-lab/inbox-agent/logs/compile.log 2>&1
+
+# Daily at 09:00 UTC — daily digest to Telegram.
+0 9 * * * INBOX_AGENT_HOME=$HOME/.claude-lab/inbox-agent PRINCE_CHAT_ID=<YOUR_TG_USER_ID> CLAUDE_BIN=$HOME/.local/bin/claude bash $HOME/.claude-lab/inbox-agent/scripts/daily-digest.sh >> $HOME/.claude-lab/inbox-agent/logs/daily-digest.log 2>&1

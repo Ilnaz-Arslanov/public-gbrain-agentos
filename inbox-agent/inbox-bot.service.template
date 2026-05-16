@@ -1,0 +1,37 @@
+# inbox-bot.service.template — run inbox-agent/bot.py as a long-running daemon
+# on your LOCAL machine (laptop / desktop). This is NOT for the gbrain VPS.
+#
+# Linux (systemd user unit, recommended):
+#   1. cp inbox-agent/inbox-bot.service.template ~/.config/systemd/user/inbox-bot.service
+#   2. edit {{INBOX_AGENT_HOME}} and {{PYTHON_BIN}} below
+#   3. systemctl --user daemon-reload
+#   4. systemctl --user enable --now inbox-bot.service
+#   5. journalctl --user -u inbox-bot -f
+#
+# macOS: use launchd instead. See inbox-agent/README.md.
+#
+# Alternative if you don't want systemd: `nohup python3 bot.py &` or run inside
+# tmux/screen. Or `@reboot` in your crontab:
+#   @reboot INBOX_AGENT_HOME=$HOME/.claude-lab/inbox-agent \
+#           PRINCE_CHAT_ID=<your_id> \
+#           /usr/bin/python3 $HOME/.claude-lab/inbox-agent/bot.py \
+#           >> $HOME/.claude-lab/inbox-agent/logs/bot.log 2>&1 &
+
+[Unit]
+Description=inbox-agent Telegram bot daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=INBOX_AGENT_HOME={{INBOX_AGENT_HOME}}
+Environment=PRINCE_CHAT_ID={{PRINCE_CHAT_ID}}
+WorkingDirectory={{INBOX_AGENT_HOME}}
+ExecStart={{PYTHON_BIN}} {{INBOX_AGENT_HOME}}/bot.py
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:{{INBOX_AGENT_HOME}}/logs/bot.log
+StandardError=append:{{INBOX_AGENT_HOME}}/logs/bot.log
+
+[Install]
+WantedBy=default.target

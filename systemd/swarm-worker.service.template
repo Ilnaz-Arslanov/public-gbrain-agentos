@@ -1,0 +1,39 @@
+[Unit]
+Description=gbrain Swarm Worker (delivery outbox -> agent gateways)
+After=postgresql.service network.target gbrain-swarm-mcp.service
+Wants=postgresql.service
+PartOf=gbrain-swarm-mcp.service
+
+[Service]
+Type=simple
+User={{SERVICE_USER}}
+Group={{SERVICE_USER}}
+WorkingDirectory={{INSTALL_DIR}}
+Environment=PYTHONPATH={{INSTALL_DIR}}
+# Worker doesn't bind a port. MCP_PORT is required by Config but ignored at runtime.
+Environment=MCP_PORT=0
+EnvironmentFile={{ETC_DIR}}/secrets.env
+# AGENT_GATEWAYS is a JSON map {"agent_name": "https://gateway.example/webhook"}.
+# Populate it via a drop-in (see systemd/README.md). Empty map = worker idles.
+ExecStart={{INSTALL_DIR}}/.venv/bin/python -m services.swarm_mcp.worker
+Restart=on-failure
+RestartSec=5
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ReadWritePaths={{LOG_DIR}} {{STATE_DIR}}
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LockPersonality=yes
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+# Light footprint — async httpx + asyncpg poll loop, no embedding model.
+MemoryMax=512M
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,13 @@
+<b>Inbox digest — {{DATE}}</b>
+
+<i>{{COUNT}} items in the last 24 hours.</i>
+
+{{#each types}}
+<b>{{name}}</b>
+{{#each entries}}
+- <a href="{{url}}">{{title}}</a>: {{tldr}}
+{{/each}}
+
+{{/each}}
+<b>Themes</b>
+<pre>{{themes}}</pre>

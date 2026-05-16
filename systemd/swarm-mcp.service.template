@@ -1,0 +1,35 @@
+[Unit]
+Description=gbrain Swarm MCP (event bus)
+After=postgresql.service network.target
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User={{SERVICE_USER}}
+Group={{SERVICE_USER}}
+WorkingDirectory={{INSTALL_DIR}}
+Environment=PYTHONPATH={{INSTALL_DIR}}
+Environment=MCP_PORT=8766
+EnvironmentFile={{ETC_DIR}}/secrets.env
+ExecStart={{INSTALL_DIR}}/.venv/bin/python -m services.swarm_mcp.server
+Restart=on-failure
+RestartSec=5
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ReadWritePaths={{INSTALL_DIR}}/vault {{LOG_DIR}} {{STATE_DIR}}
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LockPersonality=yes
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+# MemoryDenyWriteExecute omitted — Python C-extensions require RWX on import.
+MemoryMax=1G
+
+[Install]
+WantedBy=multi-user.target

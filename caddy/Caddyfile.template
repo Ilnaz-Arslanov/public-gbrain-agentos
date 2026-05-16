@@ -1,0 +1,53 @@
+# gbrain MCP gateway — path-based routing
+#
+# Rendered by scripts/install.sh with envsubst: ${DOMAIN}, ${ACME_EMAIL}
+# Output: /etc/caddy/Caddyfile.d/gbrain.caddy
+#
+# DNS prerequisite: ${DOMAIN} must resolve to this host's public IP.
+# Port 80 must be reachable for ACME HTTP-01 challenge.
+# If you front this with Cloudflare, set the DNS record to DNS-only (grey cloud) —
+# CDN proxies buffer SSE and break streamable-http MCP transport.
+
+mcp.{$DOMAIN} {
+    tls {$ACME_EMAIL}
+
+    # SSE / streamable-http: disable response buffering so events flush immediately.
+    # Without this, MCP clients see hangs on long-lived streams.
+
+    @memory path /memory/*
+    handle @memory {
+        reverse_proxy 127.0.0.1:8767 {
+            flush_interval -1
+            header_up Host {upstream_hostport}
+        }
+    }
+
+    @recall path /recall/*
+    handle @recall {
+        reverse_proxy 127.0.0.1:8768 {
+            flush_interval -1
+            header_up Host {upstream_hostport}
+        }
+    }
+
+    @swarm path /swarm/*
+    handle @swarm {
+        reverse_proxy 127.0.0.1:8766 {
+            flush_interval -1
+            header_up Host {upstream_hostport}
+        }
+    }
+
+    # Default: friendly banner for browser hits and uptime probes.
+    handle {
+        respond "gbrain MCP gateway: /memory/mcp /recall/mcp /swarm/mcp" 200
+    }
+
+    log {
+        output file /var/log/caddy/gbrain.access.log {
+            roll_size 50mb
+            roll_keep 7
+        }
+        format json
+    }
+}

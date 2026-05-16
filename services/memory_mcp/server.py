@@ -1,0 +1,111 @@
+"""FastMCP server for memory-mcp (write-side), default port 8767.
+
+This server intentionally mirrors the swarm-mcp pattern: an ASGI
+AuthCaptureMiddleware reads the Authorization header per HTTP request and
+publishes it into a ContextVar that tool handlers read via _extract_token.
+
+There is NO environment-variable fallback for the bearer token. A missing
+or malformed Authorization header raises PermissionError → HTTP 401.
+"""
+import logging
+import os
+import sys
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
+from fastmcp import FastMCP
+
+# Ensure parent package is importable when running as module
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from services.shared.config import Config
+from services.shared.db import close_pool, get_pool
+
+from .tools import _REQUEST_AUTH, register_tools
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+logger = logging.getLogger(__name__)
+
+DEFAULT_PORT = 8767
+
+
+@asynccontextmanager
+async def lifespan(server: FastMCP) -> AsyncIterator[dict[str, object]]:
+    """Manage asyncpg pool lifecycle."""
+    config = Config(
+        mcp_port=int(os.environ.get("MCP_PORT", str(DEFAULT_PORT))),
+    )
+    pool = await get_pool(config)
+    logger.info(
+        "memory-mcp started: vault=%s port=%d",
+        config.vault_root,
+        config.mcp_port,
+    )
+    try:
+        yield {"pool": pool, "config": config}
+    finally:
+        await close_pool()
+        logger.info("memory-mcp shutdown complete")
+
+
+config = Config(
+    mcp_port=int(os.environ.get("MCP_PORT", str(DEFAULT_PORT))),
+)
+
+mcp = FastMCP(
+    "memory-mcp",
+    lifespan=lifespan,
+)
+
+
+async def _get_pool() -> object:
+    """Pool accessor for tools."""
+    return await get_pool(config)
+
+
+register_tools(mcp, config.vault_root, _get_pool)
+
+
+class AuthCaptureMiddleware:
+    """ASGI middleware: capture Authorization header per-request into ContextVar.
+
+    Required because FastMCP stateless HTTP does not surface request headers
+    to tool handlers via ctx.request_context.request in the streamable-http
+    transport. Tool handlers read the captured value via _REQUEST_AUTH.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        auth = None
+        for k, v in scope.get("headers", []):
+            if k.lower() == b"authorization":
+                auth = v.decode("latin-1")
+                break
+        token = _REQUEST_AUTH.set(auth)
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            _REQUEST_AUTH.reset(token)
+
+
+def main() -> None:
+    """Entry point for memory-mcp server."""
+    import uvicorn
+    port = int(os.environ.get("MCP_PORT", str(DEFAULT_PORT)))
+    host = os.environ.get("MCP_HOST", "0.0.0.0")
+    logger.info("Starting memory-mcp on %s:%d (with auth middleware)", host, port)
+    app = mcp.http_app(transport="streamable-http")
+    app = AuthCaptureMiddleware(app)
+    uvicorn.run(app, host=host, port=port, log_level="info")
+
+
+if __name__ == "__main__":
+    main()
