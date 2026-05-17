@@ -204,6 +204,8 @@ HTTP request --> AuthCaptureMiddleware --> FastMCP HTTP app --> tool handler
 
 **Why no env fallback?** Earlier versions had an `MCP-FALLBACK-TOKEN` env variable used when no Authorization header was present. This silently misattributed every unauthenticated request to a single fallback agent — every other agent looked like the fallback. Identity is a security boundary. A missing header now returns 401 explicitly. No silent attribution.
 
+**HMAC dual-auth (Hermes sidecar):** in addition to Bearer tokens, all four services accept HMAC-signed requests via `HermesAwareAuthMiddleware` (in `services/shared/asgi_auth.py`). The middleware inspects each request for either a `Bearer` header or a `X-Hermes-Signature` header (`ts=<epoch>;sig=<hex>`). Both resolve to the same `AgentContext` downstream. The HMAC path is designed for Hermes agent sidecars that proxy requests on behalf of agents running outside Claude Code. See [`security.md`](./security.md) for the threat model.
+
 ---
 
 ## Recall — hybrid search, RRF, decay, source_weights

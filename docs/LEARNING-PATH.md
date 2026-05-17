@@ -56,13 +56,13 @@ Open a blank file. Without looking at the diagram, sketch the four memory layers
 
 ## Milestone 2: Architecture — How the Stack Fits
 
-**Concept.** The shared brain is three small MCP services (memory, recall, swarm) in front of one Postgres database with the `pgvector` extension. Every agent talks to those services over HTTP using the Model Context Protocol. A bearer token in the request header identifies the agent. A middleware layer reads the header at the transport boundary and pins the identity for the entire request. Without that pin, every call would look like it came from the same caller — which is exactly the bug that you do not want to ship.
+**Concept.** The shared brain is four small MCP services (memory, recall, swarm, task) in front of one Postgres database with the `pgvector` extension. Every agent talks to those services over HTTP using the Model Context Protocol. A bearer token in the request header identifies the agent. A middleware layer reads the header at the transport boundary and pins the identity for the entire request. Without that pin, every call would look like it came from the same caller — which is exactly the bug that you do not want to ship.
 
 You do not need to understand the SQL. You do need to understand the request path: agent → MCP transport → service handler → database → response.
 
 Two ideas worth slowing down on. First, MCP is just a transport contract — your agent does not care which language the server is written in, only that the tool names and shapes match the manifest. That decoupling is why you can swap out the recall service without touching any agent code. Second, identity at the boundary is not paranoia, it is what makes audit, rate-limiting, and per-agent permissions possible later without rewriting any handler.
 
-The three services split by verb, not by data. Memory writes facts. Recall reads facts. Swarm moves messages between agents. They all share the same Postgres instance and the same auth model — splitting them by responsibility makes each one small enough to reason about and replace independently.
+The four services split by verb, not by data. Memory writes facts. Recall reads facts. Swarm moves messages between agents. Task manages the kanban board and agent heartbeats. They all share the same Postgres instance and the same auth model — splitting them by responsibility makes each one small enough to reason about and replace independently.
 
 ### Read
 
@@ -78,7 +78,7 @@ On paper or in a whiteboard tool, draw the request path for a single `recall` ca
 
 1. Why is `pgvector` better than a separate vector database for a small team running this stack?
 2. What does the auth middleware do that the tool handler cannot do safely on its own?
-3. Name the three MCP services and one verb each one is responsible for.
+3. Name the four MCP services and one verb each one is responsible for.
 
 ---
 

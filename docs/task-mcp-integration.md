@@ -1,6 +1,6 @@
 # Task MCP Integration Guide
 
-Task MCP provides a kanban-style task board and agent registry over MCP (Streamable HTTP transport). It runs as the 5th gbrain service alongside memory, recall, swarm, and ingest.
+Task MCP provides a kanban-style task board and agent registry over MCP (Streamable HTTP transport). It runs as the 4th MCP service alongside memory, recall, and swarm (plus the non-MCP ingest worker).
 
 ## Quick start
 

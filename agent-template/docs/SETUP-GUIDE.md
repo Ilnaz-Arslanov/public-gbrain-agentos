@@ -3,7 +3,7 @@
 Step-by-step setup for an agent workspace wired to a shared gbrain MCP server.
 
 This is the "client-side" of the public-gbrain-agentos distro. The "server-side"
-(memory MCP, recall MCP, swarm MCP, Postgres + pgvector, Caddy + TLS) is
+(memory MCP, recall MCP, swarm MCP, task MCP, Postgres + pgvector, Caddy + TLS) is
 documented in [../docs/SERVER-SETUP.md](../docs/SERVER-SETUP.md) and installed
 via [../scripts/install-vps.sh](../scripts/install-vps.sh). You **must** have a
 running gbrain server (or know its `MCP_HOST` URL and have a Bearer token for
@@ -13,9 +13,10 @@ your agent) before running `install.sh` here.
 
 `agent-template/install.sh` creates `~/.claude-lab/<agent-id>/.claude/`. Inside,
 a four-layer memory pyramid (IDENTITY -> WARM -> HOT -> COLD) lives as Markdown
-files. A `.mcp.json` points Claude Code at three remote MCP servers --
+files. A `.mcp.json` points Claude Code at four remote MCP servers --
 **memory** (write decisions / runbooks / external notes), **recall** (read
-shared semantic memory), **swarm** (notify other agents) -- all behind a single
+shared semantic memory), **swarm** (notify other agents), **task** (kanban board
+and agent heartbeat) -- all behind a single
 `${MCP_HOST}` Bearer-authenticated endpoint. Three local hooks
 (`session-start`, `stop`, `precompact`) keep the local memory fresh; an
 optional `gbrain-recall-on-start.sh` pulls top-N relevant items from the

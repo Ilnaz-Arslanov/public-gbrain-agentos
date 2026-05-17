@@ -1,12 +1,13 @@
 # systemd unit templates
 
-Five service unit templates that `scripts/install.sh` renders and installs to `/etc/systemd/system/`:
+Six service unit templates that `scripts/install.sh` renders and installs to `/etc/systemd/system/`:
 
 | Template | Installed name | Purpose |
 |---|---|---|
 | `memory-mcp.service.template` | `gbrain-memory-mcp.service` | Write-side MCP (port 8767) |
 | `recall-mcp.service.template` | `gbrain-recall-mcp.service` | Read-side MCP (port 8768) |
 | `swarm-mcp.service.template` | `gbrain-swarm-mcp.service` | Inter-agent event bus (port 8766) |
+| `swarm-worker.service.template` | `gbrain-swarm-worker.service` | Swarm delivery worker |
 | `task-mcp.service.template` | `gbrain-task-mcp.service` | Task board + agent heartbeat (port 8769) |
 | `ingest-worker.service.template` | `gbrain-ingest-worker.service` | Vault file indexer |
 
@@ -39,12 +40,12 @@ for tpl in systemd/*.service.template; do
     "$tpl" | sudo tee "$rendered" >/dev/null
 done
 sudo systemctl daemon-reload
-sudo systemctl enable --now gbrain-memory-mcp gbrain-recall-mcp gbrain-swarm-mcp gbrain-task-mcp gbrain-ingest-worker
+sudo systemctl enable --now gbrain-memory-mcp gbrain-recall-mcp gbrain-swarm-mcp gbrain-swarm-worker gbrain-task-mcp gbrain-ingest-worker
 ```
 
 ## Hardening notes
 
-All four units run with a tight sandbox:
+All six units run with a tight sandbox:
 
 - `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome=yes` — minimum filesystem reach
 - `ReadWritePaths` allow-list only the vault + log + state dirs
@@ -60,12 +61,12 @@ If a service refuses to start with a syscall error, check `journalctl -u gbrain-
 After install:
 
 ```bash
-systemctl status gbrain-memory-mcp gbrain-recall-mcp gbrain-swarm-mcp gbrain-task-mcp gbrain-ingest-worker
+systemctl status gbrain-memory-mcp gbrain-recall-mcp gbrain-swarm-mcp gbrain-swarm-worker gbrain-task-mcp gbrain-ingest-worker
 journalctl -u gbrain-memory-mcp -n 50 --no-pager
 ss -tlnp | grep -E '876[6789]'
 ```
 
-You should see four sockets listening on 8766 / 8767 / 8768 / 8769, all owned by `python` processes under the `gbrain` user.
+You should see four sockets listening on 8766 / 8767 / 8768 / 8769, all owned by `python` processes under the `gbrain` user, plus the `gbrain-swarm-worker` background service (no listening port).
 
 ## Troubleshooting
 

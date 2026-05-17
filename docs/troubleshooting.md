@@ -363,3 +363,58 @@ What you should not do: edit `~/.claude/CLAUDE.md` to add agent-specific rules (
 - Rebuild indexes if missing: re-run `migrations/002_indexes.sql`.
 - Tune HNSW: `m=16, ef_construction=64` is the default; for >50k rows consider `m=32`.
 - If the vault is genuinely large, scale the VPS.
+
+---
+
+## Task MCP issues
+
+### Task state transition rejected
+
+```
+ValueError: invalid transition from 'done' to 'progress'
+```
+
+The task state machine enforces valid transitions: new→progress, progress→review, review→done, any→blocked, blocked→new, review→progress (via task_reopen). Attempting an invalid transition raises ValueError. Use `task_reopen` to move blocked→new or review→progress.
+
+### Agent lacks write scope for tasks
+
+```
+PermissionError: Agent 'researcher' lacks write scope '10-tasks'
+```
+
+The agent's token was issued without the `10-tasks` scope. Re-issue with:
+
+```bash
+python3 scripts/issue-agent-token.py --agent researcher --scopes '10-tasks,30-decisions'
+```
+
+Then update the agent's `.mcp.json` Bearer token.
+
+---
+
+## HMAC auth issues
+
+### Bad signature (401)
+
+```
+401: HMAC signature verification failed
+```
+
+Check: (1) shared secret matches between sidecar config and `HMAC_SHARED_SECRET` env var on the MCP server, (2) clock skew between sidecar and server is under 300 seconds, (3) signature format is `ts=<epoch>;sig=<hex-sha256>`.
+
+### Expired timestamp
+
+```
+401: HMAC timestamp expired (delta: 312s, tolerance: 300s)
+```
+
+The sidecar's clock is more than 300s ahead or behind the MCP server. Sync clocks via NTP or increase `HMAC_TIMESTAMP_TOLERANCE_SECONDS` in the server's `.env`.
+
+### AuthCaptureMiddleware not in all servers
+
+All four server.py files (memory, recall, swarm, task) must subclass `HermesAwareAuthMiddleware`. Verify:
+
+```bash
+grep -l 'AuthCaptureMiddleware' services/*/server.py
+# Expected: 4 files
+```

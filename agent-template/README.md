@@ -1,7 +1,7 @@
 # agent-template
 
 Complete Claude Code agent workspace template, wired to a shared **gbrain** MCP
-server (memory + recall + swarm). Ported from
+server (memory + recall + swarm + task). Ported from
 `public-architecture-claude-code` and adapted: the upstream semantic-memory
 backend is replaced with gbrain MCP recall (HTTP + Bearer + JSON-RPC).
 
@@ -50,7 +50,7 @@ harness on failure.
 ```
 ~/.claude-lab/<agent-id>/.claude/
 |-- CLAUDE.md                  # SOUL / identity
-|-- .mcp.json                  # gbrain memory/recall/swarm endpoints (chmod 600)
+|-- .mcp.json                  # gbrain memory/recall/swarm/task endpoints (chmod 600)
 |-- settings.json              # Claude Code hooks (SessionStart/Stop/PreCompact)
 |-- agent.env                  # source this to export MCP_HOST/AGENT_BEARER
 |-- core/
@@ -89,7 +89,7 @@ agent-template/
 |   |-- recent.md.template
 |   |-- MEMORY.md.template
 |   |-- LEARNINGS.md.template
-|   |-- mcp.json.template              .mcp.json with 3 gbrain servers
+|   |-- mcp.json.template              .mcp.json with 4 gbrain servers
 |   `-- settings.json.template         hooks wiring
 |-- scripts/
 |   |-- memory-rotate.sh               archive COLD when >5KB

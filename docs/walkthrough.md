@@ -88,7 +88,7 @@ through an API, the API enforces invariants — schema, permissions,
 audit trail. You trade a little latency for a lot of correctness, and
 the latency is measured in tens of milliseconds.
 
-In this repo the brain runs three services on one VPS. Each service is
+In this repo the brain runs four services on one VPS. Each service is
 a small Python process speaking the Model Context Protocol (MCP) over
 streamable HTTP, so any MCP-aware client can talk to it. (MCP is a
 JSON-RPC tool-calling protocol — function calls over HTTP that any
@@ -137,7 +137,7 @@ and never notice that the argument is forgeable.
 > happened. If you implement nothing else from this repo, implement
 > this.
 
-The three services share one Postgres database and one filesystem
+The four services share one Postgres database and one filesystem
 vault. The vault is plain markdown organized into semantic folders —
 `30-decisions/`, `70-runbooks/`, `80-error-patterns/`, and so on.
 Markdown is the canonical store. The Postgres index is derived: if you
@@ -259,11 +259,11 @@ wherever your agents actually run.
 
 On the VPS you will have **Postgres 15 or newer** with the `pgvector`
 extension, holding the search index and metadata tables. You will
-have **three MCP services** — memory, recall, swarm — each a small
+have **four MCP services** — memory, recall, swarm, task — each a small
 Python process listening on its own port. An **ingest worker**
 processes the embedding queue: when memory writes a note, the worker
 generates the embedding and indexes it. A **reverse proxy** (Caddy is
-the recommended default) gives all three services one TLS-protected
+the recommended default) gives all four services one TLS-protected
 hostname. If you want the inbox pattern, an **optional Telegram bot**
 runs as a separate process on the same VPS.
 
@@ -271,7 +271,7 @@ On your local machine you will have **Claude Code** with a workspace
 per agent. An "agent" here is just a directory with its own
 `CLAUDE.md`, its own skills, and its own bearer token. You will have
 an **`.mcp.json` file** in each workspace pointing the agent at the
-three MCP services. This is the integration surface: once it is set,
+four MCP services. This is the integration surface: once it is set,
 the agent can call `memory.create_decision_note(...)` like a local
 function. Each workspace also keeps **local memory files** —
 `recent.md`, `decisions.md`, `LEARNINGS.md` — populated by the hooks

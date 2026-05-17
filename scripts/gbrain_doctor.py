@@ -1,7 +1,7 @@
 """gbrain doctor — operator diagnostic CLI for self-hosted gbrain installs.
 
 Single-file, stdlib-first (plus asyncpg + httpx already runtime deps).
-Runs 10 checks against the local install and reports pass/warn/fail.
+Runs 11 checks against the local install and reports pass/warn/fail.
 
 Required environment variables (typically loaded from /etc/gbrain/secrets.env):
     PG_HOST, PG_PORT, PG_DATABASE, PG_USER, PG_PASSWORD
