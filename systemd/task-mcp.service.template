@@ -1,0 +1,23 @@
+[Unit]
+Description=gbrain Task MCP (task board + agent heartbeat)
+After=postgresql.service network.target
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User={{SERVICE_USER}}
+Group={{SERVICE_USER}}
+WorkingDirectory={{INSTALL_DIR}}
+Environment=PYTHONPATH={{INSTALL_DIR}}
+Environment=MCP_PORT=8769
+EnvironmentFile={{ETC_DIR}}/secrets.env
+ExecStart={{INSTALL_DIR}}/.venv/bin/python -m services.task_mcp.server
+Restart=on-failure
+RestartSec=5
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+
+[Install]
+WantedBy=multi-user.target
