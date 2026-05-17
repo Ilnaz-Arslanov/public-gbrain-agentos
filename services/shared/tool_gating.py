@@ -5,12 +5,12 @@ Reads a single environment variable, ``GBRAIN_TOOLS``, with two valid values:
 - ``core`` (default): expose only the operational subset of tools.
 - ``all``: expose the full tool surface, including admin/diagnostic and slot tools.
 
-The three MCP services call ``should_register_tool(server_name, tool_name, tool_set)``
+The MCP services call ``should_register_tool(server_name, tool_name, tool_set)``
 during ``register_tools()`` to decide whether to register a given tool. Tools that
 are skipped at registration time never appear in the MCP ``tools/list`` response
 and cannot be invoked, so the gating doubles as a security boundary, not just UX.
 
-Server names are exact strings: ``"memory_mcp"``, ``"recall_mcp"``, ``"swarm_mcp"``.
+Server names are exact strings: ``"memory_mcp"``, ``"recall_mcp"``, ``"swarm_mcp"``, ``"task_mcp"``.
 """
 from __future__ import annotations
 
@@ -34,6 +34,22 @@ CORE_TOOLS_BY_SERVER: dict[str, frozenset[str]] = {
     }),
     # Swarm has no "core-only" tools -- notify/ack are always-on instead.
     "swarm_mcp": frozenset(),
+    # Task board: CRUD + status transitions are always-on (core operational set).
+    "task_mcp": frozenset({
+        "task_create",
+        "task_update",
+        "task_get",
+        "task_list",
+        "task_start",
+        "task_review",
+        "task_done",
+        "task_block",
+        "task_reopen",
+        "task_history",
+        "agent_heartbeat",
+        "agent_status",
+        "agent_list",
+    }),
 }
 
 # Tools that must register in BOTH "core" and "all" modes. Used by swarm where
@@ -42,6 +58,7 @@ ALWAYS_ON_TOOLS_BY_SERVER: dict[str, frozenset[str]] = {
     "memory_mcp": frozenset(),
     "recall_mcp": frozenset(),
     "swarm_mcp": frozenset({"notify", "ack"}),
+    "task_mcp": frozenset(),
 }
 
 
@@ -70,7 +87,7 @@ def should_register_tool(server_name: str, tool_name: str, tool_set: str) -> boo
     """Return True if the given tool should be registered in the given mode.
 
     Args:
-        server_name: One of ``"memory_mcp"``, ``"recall_mcp"``, ``"swarm_mcp"``.
+        server_name: One of ``"memory_mcp"``, ``"recall_mcp"``, ``"swarm_mcp"``, ``"task_mcp"``.
         tool_name: Function name of the MCP tool (matches the decorated function).
         tool_set: Resolved tool set, typically the output of :func:`parse_tool_set`.
 
