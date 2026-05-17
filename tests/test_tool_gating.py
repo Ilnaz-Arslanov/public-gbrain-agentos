@@ -150,6 +150,35 @@ def test_swarm_core_hides_non_operational_tools() -> None:
         assert should_register_tool("swarm_mcp", name, "all") is True
 
 
+def test_task_core_tools_policy() -> None:
+    """Core mode allows all 13 task tools (they are the operational set)."""
+    core_task = {
+        "task_create", "task_update", "task_get", "task_list",
+        "task_start", "task_review", "task_done", "task_block",
+        "task_reopen", "task_history",
+        "agent_heartbeat", "agent_status", "agent_list",
+    }
+    for name in core_task:
+        assert should_register_tool("task_mcp", name, "core") is True
+
+
+def test_task_all_tools_policy() -> None:
+    """All mode also allows all 13 task tools (no hidden extras)."""
+    core_task = {
+        "task_create", "task_update", "task_get", "task_list",
+        "task_start", "task_review", "task_done", "task_block",
+        "task_reopen", "task_history",
+        "agent_heartbeat", "agent_status", "agent_list",
+    }
+    for name in core_task:
+        assert should_register_tool("task_mcp", name, "all") is True
+
+
+def test_task_always_on_is_empty() -> None:
+    """task_mcp has no always-on tools (unlike swarm's notify/ack)."""
+    assert ALWAYS_ON_TOOLS_BY_SERVER["task_mcp"] == frozenset()
+
+
 def test_valid_tool_sets_constant() -> None:
     """The constant must enumerate exactly the documented values."""
     assert VALID_TOOL_SETS == frozenset({"core", "all"})
@@ -161,6 +190,7 @@ def test_core_tools_by_server_constant_shape() -> None:
         "memory_mcp",
         "recall_mcp",
         "swarm_mcp",
+        "task_mcp",
     }
 
 
