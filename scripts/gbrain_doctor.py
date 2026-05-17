@@ -342,12 +342,12 @@ def check_vault_root_writable(vault_root: Path) -> CheckResult:
     )
 
 
-def _default_mcp_ports() -> tuple[int, int, int]:
+def _default_mcp_ports() -> tuple[int, int, int, int]:
     """Read MCP ports from env vars with .env.example defaults.
 
     Mirrors the install / smoke-test scripts so custom installs don't
-    false-fail when MCP_MEMORY_PORT / MCP_RECALL_PORT / MCP_SWARM_PORT
-    are overridden (H3).
+    false-fail when MCP_MEMORY_PORT / MCP_RECALL_PORT / MCP_SWARM_PORT /
+    MCP_TASK_PORT are overridden (H3).
     """
     def _port(name: str, default: int) -> int:
         raw = os.environ.get(name)
@@ -362,6 +362,7 @@ def _default_mcp_ports() -> tuple[int, int, int]:
         _port("MCP_MEMORY_PORT", 8767),
         _port("MCP_RECALL_PORT", 8768),
         _port("MCP_SWARM_PORT", 8766),
+        _port("MCP_TASK_PORT", 8769),
     )
 
 
@@ -370,8 +371,8 @@ async def check_mcp_livez(
 ) -> CheckResult:
     """Probe local MCP /livez endpoints on the documented ports.
 
-    H3: reads ports from MCP_MEMORY_PORT / MCP_RECALL_PORT / MCP_SWARM_PORT
-    env vars (default 8767/8768/8766). M8: realizes ``ports`` into a tuple
+    H3: reads ports from MCP_MEMORY_PORT / MCP_RECALL_PORT / MCP_SWARM_PORT /
+    MCP_TASK_PORT env vars (default 8767/8768/8766/8769). M8: realizes ``ports`` into a tuple
     on entry so the "responding" success message never sees an exhausted
     iterator.
     """
@@ -405,6 +406,7 @@ async def check_mcp_livez(
                         "gbrain-memory-mcp",
                         "gbrain-recall-mcp",
                         "gbrain-swarm-mcp",
+                        "gbrain-task-mcp",
                     ],
                     check=True,
                     timeout=30,
@@ -417,7 +419,7 @@ async def check_mcp_livez(
             name="mcp_livez",
             status="fail",
             message=f"unreachable: {', '.join(failed)}",
-            remediation="sudo systemctl restart gbrain-memory-mcp gbrain-recall-mcp gbrain-swarm-mcp",
+            remediation="sudo systemctl restart gbrain-memory-mcp gbrain-recall-mcp gbrain-swarm-mcp gbrain-task-mcp",
             auto_fix=_autofix,
         )
     return CheckResult(
@@ -831,7 +833,7 @@ async def maybe_autofix(
         if r.name == "mcp_livez" and not getattr(args, "yes", False):
             if not _confirm_autofix(
                 "[fix] mcp_livez autofix will run "
-                "`systemctl restart gbrain-{memory,recall,swarm}-mcp`. "
+                "`systemctl restart gbrain-{memory,recall,swarm,task}-mcp`. "
                 "Continue? [y/N] "
             ):
                 print(

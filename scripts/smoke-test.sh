@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# smoke-test.sh — verify the three MCP services answer `tools/list` over HTTP.
+# smoke-test.sh — verify the four MCP services answer `tools/list` over HTTP.
 #
 # Usage:
 #   bash scripts/smoke-test.sh                    # uses localhost ports
@@ -27,6 +27,7 @@ fi
 : "${MCP_MEMORY_PORT:=8767}"
 : "${MCP_RECALL_PORT:=8768}"
 : "${MCP_SWARM_PORT:=8766}"
+: "${MCP_TASK_PORT:=8769}"
 : "${ADMIN_TOKEN:=}"
 
 # Load admin token from file if not set
@@ -47,12 +48,14 @@ if [ -n "$MCP_BASE" ]; then
     "memory:${MCP_BASE}/memory/mcp"
     "recall:${MCP_BASE}/recall/mcp"
     "swarm:${MCP_BASE}/swarm/mcp"
+    "task:${MCP_BASE}/task/mcp"
   )
 else
   ENDPOINTS=(
     "memory:http://127.0.0.1:${MCP_MEMORY_PORT}/mcp"
     "recall:http://127.0.0.1:${MCP_RECALL_PORT}/mcp"
     "swarm:http://127.0.0.1:${MCP_SWARM_PORT}/mcp"
+    "task:http://127.0.0.1:${MCP_TASK_PORT}/mcp"
   )
 fi
 
@@ -101,7 +104,7 @@ for ep in "${ENDPOINTS[@]}"; do
 done
 
 if [ "$failures" -eq 0 ]; then
-  log "all 3 services healthy"
+  log "all 4 services healthy"
   exit 0
 fi
 

@@ -31,7 +31,7 @@ You will NOT:
 
 The system you deploy has up to four layers (the last is Path B only):
 
-1. **Shared brain (VPS):** 3 MCP services (memory write / recall read / swarm event bus) backed by Postgres + pgvector, plus an ingest worker that embeds new vault files. The vault is 12 folders of markdown.
+1. **Shared brain (VPS):** 4 MCP services (memory write / recall read / swarm event bus / task board) backed by Postgres + pgvector, plus an ingest worker that embeds new vault files. The vault is 12 folders of markdown.
 2. **Inbox-agent (local):** a Telegram bot the user forwards content to (links, voice notes, screenshots). It dual-writes — once to a local `raw/` folder for resilience, once to the shared brain via the memory MCP. Cron jobs compile raw into structured notes daily and send a digest.
 3. **Skills bundle (local):** optional ingestion skills the inbox-agent (and any personal agent) can invoke per content type (YouTube transcripts, Instagram captions, X threads, voice-to-text, generic markdown).
 4. **Personal agent workspaces (local, Path B):** one or more `~/.claude-lab/<agent-id>/.claude/` workspaces produced by `agent-template/install.sh`. Each has its own SOUL (CLAUDE.md), rules, layered memory (handoff.md → decisions.md → MEMORY.md/LEARNINGS.md/TOOLS.md), Stop/SessionStart/PreCompact hooks, and an `.mcp.json` wired to the shared brain. Multiple workspaces share **one** brain — that is the point.
@@ -131,6 +131,7 @@ If the user is undecided after reading this section, default to Path A and expli
               |     +-- /memory/mcp  --> memory_mcp  :8767      |
               |     +-- /recall/mcp  --> recall_mcp  :8768      |
               |     +-- /swarm/mcp   --> swarm_mcp   :8766      |
+              |     +-- /task/mcp    --> task_mcp    :8769      |
               |                                                 |
               |   ingest-worker (systemd)                       |
               |     watches embedding_jobs --> embeds chunks    |
@@ -145,13 +146,14 @@ If the user is undecided after reading this section, default to Path A and expli
               +-------------------------------------------------+
 ```
 
-**The 3 MCP services:**
+**The 4 MCP services:**
 
 | Service | Port | Purpose | Scopes it writes |
 |---|---|---|---|
 | `memory_mcp` | 8767 | Write tools: create decision, runbook, error-pattern, external note, daily log entry | 20-daily, 30-decisions, 50-external, 50-knowledge, 70-runbooks, 80-error-patterns, 90-inbox |
 | `recall_mcp` | 8768 | Read tools: recall (hybrid search), recent, related, get-by-id, stats | none (read-only) |
 | `swarm_mcp` | 8766 | Inter-agent event bus: notify, ack, list-pending, broadcast | none (writes to `outbox` table only) |
+| `task_mcp` | 8769 | Task board: kanban CRUD + agent heartbeat (13 tools) | 10-tasks |
 
 **Auth:** each agent gets a Bearer token. Token sha256 is stored in `agent_tokens.token_sha256`. Each request's `Authorization: Bearer <token>` header is captured by `AuthCaptureMiddleware` and the token resolves to an agent identity with scoped write permissions. No header → 401. No silent fallback. Ever. **In Path B, each personal agent workspace gets its own distinct Bearer** — never share tokens between agents.
 
@@ -308,17 +310,17 @@ This is idempotent and takes 10–15 minutes. It will:
 - install systemd unit files from templates in `systemd/`
 - install Caddyfile from `caddy/Caddyfile.template` (only if domain given)
 - generate the first admin agent token and print it ONCE
-- start all 4 services (`gbrain-memory-mcp`, `gbrain-recall-mcp`, `gbrain-swarm-mcp`, `gbrain-ingest-worker`)
+- start all 5 services (`gbrain-memory-mcp`, `gbrain-recall-mcp`, `gbrain-swarm-mcp`, `gbrain-task-mcp`, `gbrain-ingest-worker`)
 
 Read the script's output carefully. The admin token is printed only once — capture it. If the script exits non-zero, do not proceed. Look at the last 50 lines for the actual error, then check `docs/troubleshooting.md`.
 
 ### Step 4: Verify all 4 services are healthy
 
 ```bash
-ssh <USER>@<VPS_IP> "systemctl status gbrain-memory-mcp gbrain-recall-mcp gbrain-swarm-mcp gbrain-ingest-worker --no-pager"
+ssh <USER>@<VPS_IP> "systemctl status gbrain-memory-mcp gbrain-recall-mcp gbrain-swarm-mcp gbrain-task-mcp gbrain-ingest-worker --no-pager"
 ```
 
-All four must be `active (running)`. If any is `failed` or `activating (auto-restart)`, pull logs:
+All five must be `active (running)`. If any is `failed` or `activating (auto-restart)`, pull logs:
 
 ```bash
 ssh <USER>@<VPS_IP> "journalctl -u <service-name> -n 100 --no-pager"
@@ -488,7 +490,7 @@ The script is **interactive**. It will prompt for:
 - **agent id** → enter `<agent-id>`
 - **role description** → enter `<role>`
 - **owner name** → enter `<owner-name>`
-- **MCP host** → enter the user's brain URL: `https://<DOMAIN>` if Caddy is up, otherwise `http://<VPS_IP>:8767` for memory, etc. (the template generates all 3 entries from one host base).
+- **MCP host** → enter the user's brain URL: `https://<DOMAIN>` if Caddy is up, otherwise `http://<VPS_IP>:8767` for memory, etc. (the template generates all 4 entries from one host base).
 - **agent bearer token** → leave **blank** for now. You will fill it in step 15.
 - **model** → enter `<model>`
 - **install dir** → default `~/.claude-lab/<agent-id>`; confirm.
@@ -553,6 +555,10 @@ For each agent, edit `~/.claude-lab/<agent-id>/.claude/.mcp.json` and replace th
     },
     "gbrain-swarm": {
       "url": "https://<DOMAIN>/swarm/mcp",
+      "headers": { "Authorization": "Bearer <ACTUAL_TOKEN>" }
+    },
+    "gbrain-task": {
+      "url": "https://<DOMAIN>/task/mcp",
       "headers": { "Authorization": "Bearer <ACTUAL_TOKEN>" }
     }
   }
@@ -661,6 +667,7 @@ There is a strict order to error handling. Do not skip steps.
    ssh <USER>@<VPS_IP> "journalctl -u gbrain-memory-mcp -n 200 --no-pager"
    ssh <USER>@<VPS_IP> "journalctl -u gbrain-recall-mcp -n 200 --no-pager"
    ssh <USER>@<VPS_IP> "journalctl -u gbrain-swarm-mcp -n 200 --no-pager"
+   ssh <USER>@<VPS_IP> "journalctl -u gbrain-task-mcp -n 200 --no-pager"
    ssh <USER>@<VPS_IP> "journalctl -u gbrain-ingest-worker -n 200 --no-pager"
    ssh <USER>@<VPS_IP> "journalctl -u postgresql -n 200 --no-pager"
    ssh <USER>@<VPS_IP> "journalctl -u caddy -n 200 --no-pager"
@@ -687,7 +694,7 @@ The deployment is complete when ALL of these are verifiable. Read each one and c
 
 ### Path A — done condition
 
-- [ ] `systemctl is-active gbrain-memory-mcp gbrain-recall-mcp gbrain-swarm-mcp gbrain-ingest-worker` returns `active` for all four.
+- [ ] `systemctl is-active gbrain-memory-mcp gbrain-recall-mcp gbrain-swarm-mcp gbrain-task-mcp gbrain-ingest-worker` returns `active` for all five.
 - [ ] `psql -U gbrain -d gbrain -c "SELECT agent, array_length(can_write_scopes,1) FROM agent_tokens WHERE revoked_at IS NULL;"` shows at least two rows (`coordinator-agent`, `inbox-agent`) with the expected scope counts.
 - [ ] `curl -sS https://<DOMAIN>/recall/mcp` or `curl -sS http://<VPS_IP>:8768/` returns the recall service banner (200, "MCP service: recall").
 - [ ] The Telegram bot (`bot.py`) responds to `/start` from the allowlisted user_id within 2 seconds, and replies with a short ack to a forwarded URL.
@@ -701,7 +708,7 @@ The deployment is complete when ALL of these are verifiable. Read each one and c
 For each agent in the user's list:
 
 - [ ] Workspace exists: `ls ~/.claude-lab/<agent-id>/.claude/` shows `CLAUDE.md`, `core/`, `hooks/`, `scripts/`, `.mcp.json`.
-- [ ] `.mcp.json` has all three gbrain entries (memory / recall / swarm), each with that agent's Bearer (not the placeholder, not the inbox-agent token, not another agent's token).
+- [ ] `.mcp.json` has all four gbrain entries (memory / recall / swarm / task), each with that agent's Bearer (not the placeholder, not the inbox-agent token, not another agent's token).
 - [ ] `claude --project ~/.claude-lab/<agent-id>/.claude` opens without errors and reports the role you set.
 - [ ] From inside that agent, `recall.recent(scope='50-external')` returns results (at minimum, the URL forwarded in Path A step 10).
 - [ ] `crontab -l | grep <agent-id>` shows three rotation entries (trim-hot, rotate-warm, compress-warm).

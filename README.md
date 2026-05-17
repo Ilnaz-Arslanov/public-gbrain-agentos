@@ -31,7 +31,7 @@ If unsure → start with Path A. Adding Path B later is one command per agent (`
 | Component | Path A | Path B |
 |---|---|---|
 | Postgres 16 + pgvector on VPS | yes | yes |
-| 3 MCP services (memory write, recall read, swarm event bus) | yes | yes |
+| 4 MCP services (memory write, recall read, swarm event bus, task board) | yes | yes |
 | Ingest worker (embeds new vault files) | yes | yes |
 | Markdown vault (12 numbered folders) | yes | yes |
 | Telegram inbox-agent (dual-write to local raw/ + brain) | yes | yes |
@@ -58,6 +58,7 @@ If unsure → start with Path A. Adding Path B later is one command per agent (`
   |  to local raw/ |                          |  memory_mcp 8767  |
   |  AND remote    |                          |  recall_mcp 8768  |
   +----------------+                          |  swarm_mcp  8766  |
+                                              |  task_mcp   8769  |
           ^                                   |  ingest-worker    |
           |                                   |                   |
   +-------+-------------+ (Path B)            |  Postgres 16      |
@@ -198,7 +199,7 @@ Apache License 2.0. See [LICENSE](LICENSE) for the full text.
 
 ## Acknowledgements
 
-- **FastMCP** — the Python MCP framework that powers the three service skeletons.
+- **FastMCP** — the Python MCP framework that powers the four service skeletons.
 - **FastEmbed** — embedding library, used for the multilingual-e5-large model (1024 dims, runs on CPU).
 - **pgvector** — Postgres extension for vector storage and HNSW indexing.
 - **Caddy** — TLS reverse proxy.

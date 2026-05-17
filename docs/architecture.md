@@ -6,7 +6,7 @@ How the system works, in enough detail that you can debug it and extend it witho
 
 ## Overview
 
-Three MCP services on a VPS, a local Telegram bot on your workstation, a markdown vault as the source of truth, Postgres + pgvector as a recomputable index, and an ingest worker that keeps the index in sync with the vault.
+Four MCP services on a VPS, a local Telegram bot on your workstation, a markdown vault as the source of truth, Postgres + pgvector as a recomputable index, and an ingest worker that keeps the index in sync with the vault.
 
 ```
                               local                      VPS
@@ -15,6 +15,7 @@ Three MCP services on a VPS, a local Telegram bot on your workstation, a markdow
   Telegram -----> |  Telegram bot       |-->|     /memory/mcp -> :8767    |
   forwards        |  dual-write hook    |   |     /recall/mcp -> :8768    |
                   |  cron: compile,     |   |     /swarm/mcp  -> :8766    |
+                  |                     |   |     /task/mcp   -> :8769    |
                   |        daily-digest |   |                             |
                   |  raw/  (local fs)   |   |  memory_mcp   recall_mcp    |
                   +---------------------+   |  swarm_mcp    ingest-worker |
@@ -35,9 +36,9 @@ Markdown stays canonical. Everything else is rebuildable from markdown + the aut
 
 ---
 
-## The three MCP services
+## The four MCP services
 
-All three speak MCP over HTTP using FastMCP's `streamable-http` transport. They each have their own systemd unit, their own port, and their own scope of behaviour. They share `services/shared/` for auth, DB, and audit logging.
+All four speak MCP over HTTP using FastMCP's `streamable-http` transport. They each have their own systemd unit, their own port, and their own scope of behaviour. They share `services/shared/` for auth, DB, and audit logging.
 
 ### `memory_mcp` (port 8767)
 
@@ -96,6 +97,32 @@ All three speak MCP over HTTP using FastMCP's `streamable-http` transport. They 
 | `stats()` | Per-agent counts of pending/acked/escalated |
 
 Tasks are at-least-once: a worker re-delivers if no ack arrives within `next_retry_at`. Idempotency is the recipient's responsibility (use the `task_id`).
+
+### `task_mcp` (port 8769)
+
+**Purpose:** a task board for kanban-style task management and agent heartbeat tracking. Agents create, update, and transition tasks through a state machine (new → progress → review → done, plus blocked). Agents also report heartbeats so the system knows which agents are alive.
+
+**Tools exposed (13 total):**
+
+| Tool | Behaviour |
+|---|---|
+| `task_create(title, assignee, ...)` | Create a new task in `new` status |
+| `task_list(assignee?, status?)` | List tasks, optionally filtered by assignee or status |
+| `task_get(task_id)` | Get a single task by id |
+| `task_start(task_id, note?)` | Transition task to `progress` |
+| `task_update(task_id, next_action?, last_result?)` | Update context fields on an in-progress task |
+| `task_review(task_id, note?)` | Transition task to `review` |
+| `task_done(task_id, note?)` | Transition task to `done` |
+| `task_block(task_id, reason)` | Transition task to `blocked` |
+| `task_unblock(task_id, note?)` | Transition task back to `progress` |
+| `task_delete(task_id)` | Delete a task |
+| `agent_heartbeat(agent?, status?)` | Report agent liveness |
+| `agent_list()` | List all known agents with last heartbeat |
+| `agent_get(agent)` | Get a single agent's status |
+
+**Tables:** `tasks` (task rows with state machine), `task_history` (audit trail of state transitions), `agents` (heartbeat and status tracking).
+
+**Write scope:** `10-tasks`. Agents need this scope in their token to create or modify tasks.
 
 ---
 
@@ -360,13 +387,13 @@ SHARED BRAIN ─ MCP on demand     (gbrain via .mcp.json — recall.*, memory.*,
 - **WARM (decisions.md)** — material decisions made in the last ~14 days. Compact (~2–4 KB). Always loaded so the agent never "forgets" what was decided last week.
 - **HOT (handoff.md)** — the last ~10 entries from `recent.md` (the full conversation log). Loaded at session start by the SessionStart hook. The full `recent.md` is **never** loaded — only the slice the hook extracts.
 - **COLD** — `MEMORY.md`, `LEARNINGS.md`, `TOOLS.md`, `AGENTS.md`. Not loaded automatically. The agent reads them with the `Read` tool when relevant. This keeps the startup payload under ~3% of a typical 400k working window.
-- **SHARED BRAIN** — everything in the gbrain vault. Accessed via the 3 MCP servers in `.mcp.json`. The agent calls `recall.recall("query")` to find anything across history, or `memory.create_decision_note(...)` to write a new entry into the shared brain alongside its local `decisions.md`.
+- **SHARED BRAIN** — everything in the gbrain vault. Accessed via the 4 MCP servers in `.mcp.json`. The agent calls `recall.recall("query")` to find anything across history, or `memory.create_decision_note(...)` to write a new entry into the shared brain alongside its local `decisions.md`.
 
 The agent does not "choose" which layer to use — the layers are wired so the right one is in front of it at the right time. CLAUDE.md is always in context. `handoff.md` is in context after SessionStart. `decisions.md` is in context always. `MEMORY.md` is one Read away. Gbrain is one `recall` call away.
 
 ### How workspaces consume the shared brain (MCP)
 
-The `.mcp.json` rendered at install time registers three MCP servers — one each for memory, recall, swarm:
+The `.mcp.json` rendered at install time registers four MCP servers — one each for memory, recall, swarm, and task:
 
 ```json
 {
@@ -382,6 +409,10 @@ The `.mcp.json` rendered at install time registers three MCP servers — one eac
     "gbrain-swarm": {
       "url": "https://<MCP_HOST>/swarm/mcp",
       "headers": { "Authorization": "Bearer <AGENT_BEARER>" }
+    },
+    "gbrain-task": {
+      "url": "https://<MCP_HOST>/task/mcp",
+      "headers": { "Authorization": "Bearer <AGENT_BEARER>" }
     }
   }
 }
@@ -389,7 +420,7 @@ The `.mcp.json` rendered at install time registers three MCP servers — one eac
 
 The bearer is per-agent (issued by `scripts/issue-agent-token.py --agent <agent-id> --scopes '...'`). The scope set the token has determines what the agent can write. A `coordinator-agent` token typically holds the full write set; a `researcher-agent` token might have an empty write set (recall only).
 
-Inside Claude Code, this surfaces as three groups of tools the agent can call: `gbrain-memory.create_decision_note(...)`, `gbrain-recall.recall(...)`, `gbrain-swarm.notify(...)`, etc. No HTTP plumbing — Claude Code handles the JSON-RPC and the Bearer.
+Inside Claude Code, this surfaces as four groups of tools the agent can call: `gbrain-memory.create_decision_note(...)`, `gbrain-recall.recall(...)`, `gbrain-swarm.notify(...)`, `gbrain-task.task_list(...)`, etc. No HTTP plumbing — Claude Code handles the JSON-RPC and the Bearer.
 
 ### How hooks glue local memory to the shared brain
 

@@ -14,6 +14,11 @@
       "type": "http",
       "url": "${MCP_HOST}/swarm/mcp",
       "headers": { "Authorization": "Bearer ${AGENT_BEARER}" }
+    },
+    "gbrain-task": {
+      "type": "http",
+      "url": "${MCP_HOST}/task/mcp",
+      "headers": { "Authorization": "Bearer ${AGENT_BEARER}" }
     }
   }
 }

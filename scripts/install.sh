@@ -71,6 +71,7 @@ fi
 : "${MCP_MEMORY_PORT:=8767}"
 : "${MCP_RECALL_PORT:=8768}"
 : "${MCP_SWARM_PORT:=8766}"
+: "${MCP_TASK_PORT:=8769}"
 : "${VAULT_ROOT:=$INSTALL_DIR/vault}"
 : "${DOMAIN:=}"
 : "${ACME_EMAIL:=}"
@@ -285,6 +286,7 @@ VAULT_ROOT=$VAULT_ROOT
 MCP_MEMORY_PORT=$MCP_MEMORY_PORT
 MCP_RECALL_PORT=$MCP_RECALL_PORT
 MCP_SWARM_PORT=$MCP_SWARM_PORT
+MCP_TASK_PORT=$MCP_TASK_PORT
 EOF
 chmod 600 "$INSTALL_ENV"
 chown "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_ENV"
@@ -399,7 +401,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 14. Start services (memory-mcp, recall-mcp, swarm-mcp, swarm-worker, ingest-worker)
+# 14. Start services (memory-mcp, recall-mcp, swarm-mcp, task-mcp, swarm-worker, ingest-worker)
 # ---------------------------------------------------------------------------
 
 note "14. start services"
@@ -408,6 +410,7 @@ systemctl enable --now \
   gbrain-memory-mcp \
   gbrain-recall-mcp \
   gbrain-swarm-mcp \
+  gbrain-task-mcp \
   gbrain-swarm-worker \
   gbrain-ingest-worker
 
@@ -416,6 +419,7 @@ systemctl --no-pager status \
   gbrain-memory-mcp \
   gbrain-recall-mcp \
   gbrain-swarm-mcp \
+  gbrain-task-mcp \
   gbrain-swarm-worker \
   gbrain-ingest-worker || true
 
@@ -427,7 +431,7 @@ note "15. smoke test"
 
 if [ -x "$INSTALL_DIR/scripts/smoke-test.sh" ]; then
   if MCP_MEMORY_PORT="$MCP_MEMORY_PORT" MCP_RECALL_PORT="$MCP_RECALL_PORT" \
-     MCP_SWARM_PORT="$MCP_SWARM_PORT" \
+     MCP_SWARM_PORT="$MCP_SWARM_PORT" MCP_TASK_PORT="$MCP_TASK_PORT" \
      bash "$INSTALL_DIR/scripts/smoke-test.sh"; then
     log "smoke test passed"
   else
@@ -458,9 +462,9 @@ fi
 cat <<EOF
 
 Next steps:
-  1. Verify services are listening:  ss -tlnp | grep -E '876[678]'
+  1. Verify services are listening:  ss -tlnp | grep -E '876[6789]'
   2. Issue per-agent tokens:         $INSTALL_DIR/.venv/bin/python $INSTALL_DIR/scripts/issue-agent-token.py --agent <name> --scopes 'read,write'
-  3. Point your local agents at:     http(s)://<host>/{memory,recall,swarm}/mcp
+  3. Point your local agents at:     http(s)://<host>/{memory,recall,swarm,task}/mcp
   4. Set up the inbox-agent locally: bash $INSTALL_DIR/scripts/install-local.sh
   5. Review $ETC_DIR/secrets.env and add provider API keys you want available.
 

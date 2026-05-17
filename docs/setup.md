@@ -74,7 +74,7 @@ The script is idempotent and takes 10–15 minutes. Watch the output. It will:
 7. Create `${VAULT_ROOT}` (default `/opt/gbrain/vault/`) and seed from `vault-template/`.
 8. Create a Python virtualenv at `/opt/gbrain/.venv/` and `pip install -r requirements.txt`.
 9. Install systemd unit files from `systemd/*.service.template` into `/etc/systemd/system/`, substituting `${INSTALL_DIR}` etc.
-10. `systemctl daemon-reload && systemctl enable --now gbrain-memory-mcp gbrain-recall-mcp gbrain-swarm-mcp gbrain-ingest-worker`.
+10. `systemctl daemon-reload && systemctl enable --now gbrain-memory-mcp gbrain-recall-mcp gbrain-swarm-mcp gbrain-task-mcp gbrain-ingest-worker`.
 11. If you passed a domain via `--domain mcp.example.com`, install `caddy/Caddyfile.template` to `/etc/caddy/Caddyfile`, substitute the domain, `systemctl reload caddy`.
 12. Generate an initial **admin agent token**. **This is printed once.** Capture it now.
 
@@ -89,6 +89,7 @@ Services running:
   gbrain-memory-mcp     active
   gbrain-recall-mcp     active
   gbrain-swarm-mcp      active
+  gbrain-task-mcp       active
   gbrain-ingest-worker  active
 
 Next: run scripts/smoke-test.sh to verify auth and tools.
@@ -101,10 +102,10 @@ If the script exits with anything other than that — stop and read `docs/troubl
 ## Step 3: verify services are healthy
 
 ```bash
-systemctl status gbrain-memory-mcp gbrain-recall-mcp gbrain-swarm-mcp gbrain-ingest-worker --no-pager
+systemctl status gbrain-memory-mcp gbrain-recall-mcp gbrain-swarm-mcp gbrain-task-mcp gbrain-ingest-worker --no-pager
 ```
 
-All four must say `active (running)`. If any says `failed`:
+All five must say `active (running)`. If any says `failed`:
 
 ```bash
 journalctl -u <service-name> -n 100 --no-pager
@@ -113,7 +114,7 @@ journalctl -u <service-name> -n 100 --no-pager
 The most common causes:
 
 - **Postgres not ready when service started** — `systemctl restart <service>` once Postgres is up.
-- **Port already in use** — another service grabbed 8766/7/8. Find it: `ss -tlnp | grep 876`. Kill or reconfigure.
+- **Port already in use** — another service grabbed 8766/7/8/9. Find it: `ss -tlnp | grep 876`. Kill or reconfigure.
 - **Permission denied on vault** — the `gbrain` user must own `${VAULT_ROOT}`. `chown -R gbrain:gbrain /opt/gbrain/vault`.
 
 ---
@@ -192,6 +193,12 @@ mcp.example.com {
     }
     handle_path /swarm/* {
         reverse_proxy 127.0.0.1:8766 {
+            flush_interval -1
+            header_up Host {upstream_hostport}
+        }
+    }
+    handle_path /task/* {
+        reverse_proxy 127.0.0.1:8769 {
             flush_interval -1
             header_up Host {upstream_hostport}
         }
@@ -353,7 +360,7 @@ The script is interactive. It will ask:
 - **agent id** — slug, lowercase, hyphenated (e.g. `coordinator-agent`, `coder-agent`). Becomes the workspace directory name and the `agent` row in `agent_tokens`.
 - **role description** — 1 line. E.g. "main coordinator and brainstorm partner".
 - **owner name** — your name. Goes into `core/USER.md` of the new workspace.
-- **MCP host** — your brain URL. `https://mcp.example.com` if Caddy is up, otherwise `http://<VPS_IP>:8767` for memory plus the matching ports for recall/swarm (the script renders all three).
+- **MCP host** — your brain URL. `https://mcp.example.com` if Caddy is up, otherwise `http://<VPS_IP>:8767` for memory plus the matching ports for recall/swarm/task (the script renders all four).
 - **agent bearer token** — leave blank for now. You will fill it in step 13.
 - **model** — `claude-sonnet-4.6` for most roles, `claude-opus-4.7` for a coordinator.
 - **install dir** — default `~/.claude-lab/<agent-id>`. Confirm.
@@ -416,6 +423,10 @@ Open `~/.claude-lab/<agent-id>/.claude/.mcp.json` and replace the `<AGENT_BEARER
     },
     "gbrain-swarm": {
       "url": "https://mcp.example.com/swarm/mcp",
+      "headers": { "Authorization": "Bearer <actual-token>" }
+    },
+    "gbrain-task": {
+      "url": "https://mcp.example.com/task/mcp",
       "headers": { "Authorization": "Bearer <actual-token>" }
     }
   }
