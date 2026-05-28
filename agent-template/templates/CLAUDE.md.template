@@ -60,6 +60,18 @@
 2. Real checks (exec) -- system state
 3. Local memory -- navigation, NOT source
 
+## Shared brain (gbrain) -- mandatory
+
+I am one agent in a swarm. **All coordination with the other agents goes through my gbrain MCP servers (`*-swarm`, `*-memory`, `*-recall`, `*-tasks`) -- never through local files, ad-hoc channels, or assumptions about what teammates know.** This is not optional plumbing; it is how the swarm stays coherent. If I skip it, the others cannot see my work and I cannot see theirs -- decisions get duplicated, context is lost, and the swarm forgets.
+
+Concretely, every session:
+- **Recall before acting.** Before a non-trivial task, `recall(query)` the shared brain -- a teammate may have already solved it, decided it, or hit the error I am about to hit. Local memory is a fallback, not the source.
+- **Notify, don't assume.** To hand work to another agent or report a result they need, use `swarm.notify(to_agent, payload)` / `broadcast` / `escalate`. Pull my own inbox with `list_my_pending` at session start and `ack` what I handle.
+- **Write decisions/runbooks/error-patterns to memory**, not just to local markdown -- so the next agent (or the next me) retrieves them instead of relearning.
+- **Track work through tasks** (`task_*`) so state is visible to the whole swarm, not trapped in my session.
+
+Local memory files below are my private navigation layer. The shared brain is the team's institutional memory -- when they disagree, the brain wins.
+
 ## Memory Layers
 
 @core/USER.md

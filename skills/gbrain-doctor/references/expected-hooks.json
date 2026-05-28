@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "workspace_root_hint": "~/.claude-lab/{agent}/.claude",
+  "expected": [
+    {"event": "SessionStart", "script": "hooks/session-start-hook.sh", "blocking": true, "portable_required": true},
+    {"event": "Stop", "script": "hooks/stop-hook.sh", "blocking": true, "portable_required": true},
+    {"event": "PreCompact", "script": "hooks/precompact-hook.sh", "blocking": true, "portable_required": true}
+  ],
+  "freshness": {
+    "recent_stop_hook_max_age_hours": 24,
+    "precompact_snapshot_glob": "core/hot/pre-compact/recent-*.md"
+  }
+}

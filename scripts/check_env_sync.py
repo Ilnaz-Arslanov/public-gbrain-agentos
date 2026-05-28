@@ -102,9 +102,14 @@ _SH_EXPLICIT_ENV_PATTERN = re.compile(
 # Iter 2: local-assignment detection in bash. Each pattern captures the
 # variable name being assigned.
 _SH_ASSIGN_PATTERNS = [
-    # VAR=value (at start of line, optionally after a keyword prefix).
+    # VAR=value, optionally after a keyword prefix. Iter 3: anchor on
+    # line-start OR an inline whitespace/semicolon boundary so multiple
+    # assignments on one line are all captured (e.g. ``STATUS="" ASSIGNEE=""``
+    # or ``TITLE="" DESC="" PRIORITY="medium"``). The previous ``^``-only
+    # anchor matched just the first var on such lines, leaking the rest as
+    # false-positive env reads.
     re.compile(
-        rf"""^\s*(?:local|export|declare|readonly|typeset)?\s*{_VAR}\s*="""
+        rf"""(?:^|[\s;])\s*(?:local|export|declare|readonly|typeset)?\s*{_VAR}\s*="""
     ),
     # `for VAR in ...` and `for VAR; do`.
     re.compile(rf"""^\s*for\s+{_VAR}\s+(?:in\b|;)"""),
