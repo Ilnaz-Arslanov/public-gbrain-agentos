@@ -1,0 +1,25 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {"type": "command", "command": "${CLAUDE_PROJECT_DIR}/hooks/session-start-hook.sh"}
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {"type": "command", "command": "${CLAUDE_PROJECT_DIR}/hooks/stop-hook.sh", "async": true}
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {"type": "command", "command": "${CLAUDE_PROJECT_DIR}/hooks/precompact-hook.sh"}
+        ]
+      }
+    ]
+  }
+}
