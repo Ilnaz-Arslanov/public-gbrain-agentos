@@ -48,6 +48,8 @@ worker помечает outbox: status=acked, цикл закрыт
 
 **Retry policy.** Worker делает до `max_attempts=5` попыток с exponential backoff (~10s, 30s, 60s, 120s, 300s между попытками). После 5 failures — `status=failed`. Manual replay через ручное `notify` с тем же payload (idempotent по task_id если передан).
 
+**Failure alerting (важно — иначе провалы тихие).** По умолчанию `status=failed` виден только в БД и логах — доставка может молча встать, и ты узнаешь об этом, только когда что-то важное не сработает. Опасный режим: один раз gateway-конфиг разъехался и **11 доставок умерли незаметно за ~2 часа**. Лечится опциональным алертом: при каждом permanent-fail (4xx ИЛИ исчерпаны попытки) worker шлёт короткое Telegram-сообщение оператору. Конфиг — `ALERT_BOT_TOKEN` (отдельный бот, например мониторинговый) + `ALERT_CHAT_ID`. Реализация best-effort: алерты собираются внутри транзакции и шлются **после commit** (нет ложных алертов на rollback), параллельно с коротким таймаутом (не блокирует polling), с `html.escape` на тексте ошибки (тело gateway-ответа с `<` иначе ломает Telegram parse, и алерт теряется ровно там, где он нужен). Сбой самого алерта никогда не валит worker-цикл.
+
 ---
 
 ## 2. Sender side — как агент A отправляет
@@ -353,7 +355,8 @@ ssh root@<vps> 'journalctl -u gbrain-swarm-worker --since "5 min ago" --no-pager
 |---|---|---|
 | `ConnectionRefusedError` / `Cannot connect` | Listener мёртв | `ssh <listener-host> 'curl http://127.0.0.1:<port>/webhook'` — проверь что listener бинд. Если за SSH tunnel — `ps aux \| grep autossh` |
 | `404 Not Found` | Path ≠ `/webhook` | Проверь `AGENT_GATEWAYS` URL — listener может слушать `/inbox` или другой path |
-| `401 Unauthorized` | Auth mismatch | Сверь Bearer/HMAC secret между worker env (`AGENT_GATEWAY_AUTH` value) и listener env. После rotate'а одного — rotate второго |
+| `401 Unauthorized` | Auth mismatch | Сверь Bearer/HMAC secret между worker env (`AGENT_GATEWAY_AUTH` value) и listener env. После rotate'а одного — rotate второго. Частая причина при флоте: worker шлёт ОДИН общий токен, а у каждого listener-плагина свой — нужна per-agent token-map (worker берёт токен по `to_agent`, fallback на общий) |
+| `404 Not Found` + listener жив | Listener привязан к своему `agent_id` и отвергает чужой | Многие плагины-receiver'ы принимают только СВОЙ настроенный `agent_id` в теле POST (или поле вообще опущено), а чужое значение возвращают 404. Worker должен либо опускать `agentId`, либо слать значение, которое listener ждёт. Делай это per-agent — у legacy-listener'ов (напр. Hermes) поведение обратное: они матчат на реальное имя агента |
 | `Timeout (10s)` | Listener inject шаг слишком долгий | Listener должен возвращать 200 БЫСТРО (≤2s), inject делать async в background. Иначе worker считает доставку failed |
 | `502 Bad Gateway` | reverse SSH tunnel оборван | autossh должен пересоздать, но проверь `ServerAliveInterval`. Если NAT режет — поставь Tailscale |
 | `dns lookup failed` | AGENT_GATEWAYS URL содержит hostname который VPS не резолвит | Используй IP или Tailscale hostname |
@@ -399,6 +402,8 @@ new = mcp__gbrain-swarm__notify(to_agent=delivery.to_agent, payload=delivery.pay
 ```
 
 Listener должен быть idempotent — если worker делает retry после failed timeout, тот же payload может прийти повторно. Inject должен detect duplicates по `task_id` если это критично для runtime.
+
+**Idempotency-header.** Чтобы receiver мог дедупить, не парся payload, worker может слать стабильный ключ в заголовке (напр. `X-Delivery-Id: <outbox row id>`). Классический race: listener успел inject и вернуть 200, но worker не дочитал ответ до своего таймаута и сделал retry → тот же payload инжектится дважды. Receiver, который помнит последние N `X-Delivery-Id`, отбрасывает дубль. Worker-сторона ключа дешёвая (заголовок), receiver-сторона дедупа — отдельная фича на стороне плагина.
 
 ---
 
