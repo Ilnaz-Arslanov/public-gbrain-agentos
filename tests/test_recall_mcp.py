@@ -397,7 +397,7 @@ def test_recall_cache_key_includes_agent_filter(monkeypatch: pytest.MonkeyPatch)
     from services.shared.auth import AgentContext
 
     async def _fake_resolve(_var, _pool, **_kwargs):
-        return AgentContext(agent="silvana", write_scopes=[], read_scopes=["*"])
+        return AgentContext(agent="nova", write_scopes=[], read_scopes=["*"])
 
     monkeypatch.setattr(
         "services.recall_mcp.search.resolve_request_identity",
@@ -407,7 +407,7 @@ def test_recall_cache_key_includes_agent_filter(monkeypatch: pytest.MonkeyPatch)
     try:
         recall_a, cache, _ = _capture_recall_tool()
         asyncio.run(recall_a("hello", limit=5, scopes=["*"], agent_filter=None))
-        asyncio.run(recall_a("hello", limit=5, scopes=["*"], agent_filter="silvana"))
+        asyncio.run(recall_a("hello", limit=5, scopes=["*"], agent_filter="nova"))
     finally:
         _REQUEST_AUTH.reset(tok)
 
@@ -417,7 +417,7 @@ def test_recall_cache_key_includes_agent_filter(monkeypatch: pytest.MonkeyPatch)
     key_filtered = cache.get_calls[1]
     assert key_unfiltered != key_filtered
     assert key_unfiltered[3] is None
-    assert key_filtered[3] == "silvana"
+    assert key_filtered[3] == "nova"
 
 
 def test_recall_cache_key_includes_source_types_sorted(
@@ -431,7 +431,7 @@ def test_recall_cache_key_includes_source_types_sorted(
     from services.shared.auth import AgentContext
 
     async def _fake_resolve(_var, _pool, **_kwargs):
-        return AgentContext(agent="silvana", write_scopes=[], read_scopes=["*"])
+        return AgentContext(agent="nova", write_scopes=[], read_scopes=["*"])
 
     monkeypatch.setattr(
         "services.recall_mcp.search.resolve_request_identity",

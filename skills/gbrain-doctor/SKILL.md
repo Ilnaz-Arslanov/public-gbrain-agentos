@@ -1,11 +1,11 @@
 ---
 name: gbrain-doctor
-description: "Proactively diagnose an Orgrimmar agent's gbrain MCP setup end-to-end: connectivity, identity, recall, swarm, hooks parity, webhooks, GitHub repo, MCP URL security, and skill install. Triggers: «gbrain-doctor», «gbrain health», «check gbrain», «gbrain MCP», «проверь gbrain», «диагностика gbrain», «не работает gbrain»."
+description: "Proactively diagnose an myfleet agent's gbrain MCP setup end-to-end: connectivity, identity, recall, swarm, hooks parity, webhooks, GitHub repo, MCP URL security, and skill install. Triggers: «gbrain-doctor», «gbrain health», «check gbrain», «gbrain MCP», «проверь gbrain», «диагностика gbrain», «не работает gbrain»."
 ---
 
 # gbrain Doctor
 
-Agent-facing safe diagnostic for an Orgrimmar agent's gbrain MCP setup. Запускается с
+Agent-facing safe diagnostic for an myfleet agent's gbrain MCP setup. Запускается с
 машины самого агента, читает `.mcp.json`, бьёт по gbrain MCP endpoints через streamable-http
 JSON-RPC и проверяет локальные hooks/webhooks/repo/skill install. Output редактируется и
 безопасен для вставки в чат.
@@ -42,10 +42,10 @@ python3 skills/gbrain-doctor/scripts/gbrain_doctor.py --agent <agent-id>
 
 ```bash
 # hooks only, без цвета
-python3 skills/gbrain-doctor/scripts/gbrain_doctor.py --agent silvana --group G6 --no-color
+python3 skills/gbrain-doctor/scripts/gbrain_doctor.py --agent nova --group G6 --no-color
 
 # машинный JSON
-python3 skills/gbrain-doctor/scripts/gbrain_doctor.py --agent silvana --json --quiet
+python3 skills/gbrain-doctor/scripts/gbrain_doctor.py --agent nova --json --quiet
 ```
 
 ## Reading Results

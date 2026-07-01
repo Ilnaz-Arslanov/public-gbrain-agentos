@@ -37,7 +37,7 @@ _PARITY_CASES = [
     (b"\x00\x01\x02tail", b"", 1_700_000_001),
     (b"k" * 64, b"hello world", 1_700_000_002),
     (
-        b"silvana-secret",
+        b"nova-secret",
         '{"msg":"привет, мой принц"}'.encode("utf-8"),
         1_700_000_003,
     ),

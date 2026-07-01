@@ -298,13 +298,13 @@ async def test_bearer_still_works_unchanged() -> None:
     pool = MagicMock()
     pool.fetchrow = AsyncMock(
         return_value={
-            "agent": "kaelthas",
+            "agent": "orion",
             "can_write_scopes": ["50-external"],
             "can_read_scopes": ["*"],
         }
     )
     ctx = await authenticate("hello-token", pool)
-    assert ctx.agent == "kaelthas"
+    assert ctx.agent == "orion"
     assert ctx.write_scopes == ["50-external"]
 
 
@@ -634,7 +634,7 @@ def test_load_hmac_secrets_from_env_handles_unset(
 # These guard the PRE-REVIEW FIX (Gap 2): existing memory_mcp / recall_mcp
 # tool call sites must reach the HMAC-aware helpers, not the Bearer-only
 # path. If the wiring regresses, audit_log.agent would stamp the wrong
-# identity (or silvana fallback). See DEVIATIONS.md → PRE-REVIEW FIX.
+# identity (or nova fallback). See DEVIATIONS.md → PRE-REVIEW FIX.
 # ---------------------------------------------------------------------------
 
 
@@ -643,13 +643,13 @@ async def test_memory_mcp_create_decision_note_via_hmac_authenticates_correctly(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """An HMAC-authenticated request reaching a memory tool resolves to the
-    HMAC agent, and audit_log would stamp that agent (not silvana fallback).
+    HMAC agent, and audit_log would stamp that agent (not nova fallback).
 
     We invoke ``_authenticate_request`` directly with an HmacAuthValue in
     the ContextVar, mirroring exactly what the slot-tool / decision-note
     call site now does (after Gap 2 fix). Then we simulate the audit_log
     write that follows in the real tool body and assert the recorded
-    ``agent`` matches the HMAC identity, not silvana.
+    ``agent`` matches the HMAC identity, not nova.
     """
     from services.memory_mcp.tools import _REQUEST_AUTH, _authenticate_request
 
@@ -694,7 +694,7 @@ async def test_memory_mcp_create_decision_note_via_hmac_authenticates_correctly(
     assert agent_ctx.agent == "tyrande", "HMAC agent must surface end-to-end"
     assert len(audit_calls) == 1
     assert audit_calls[0]["agent"] == "tyrande", (
-        "audit_log.agent must reflect HMAC-authenticated agent, not silvana"
+        "audit_log.agent must reflect HMAC-authenticated agent, not nova"
     )
     assert audit_calls[0]["tool"] == "create_decision_note"
 

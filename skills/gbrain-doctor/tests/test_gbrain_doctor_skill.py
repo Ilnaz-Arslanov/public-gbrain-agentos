@@ -523,7 +523,7 @@ class TestCliExitCodes:
                 "checks_local": [CheckResult("G7.ok", "skip", "no listener")],
             },
         )
-        code = main(["--agent", "silvana", "--mcp-json", str(_FIXTURES / "mcp-valid.json"), "--no-color"])
+        code = main(["--agent", "nova", "--mcp-json", str(_FIXTURES / "mcp-valid.json"), "--no-color"])
         assert code == 0
         out = capsys.readouterr().out
         assert "Verdict: PASS" in out

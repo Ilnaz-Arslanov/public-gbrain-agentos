@@ -2,17 +2,17 @@
   "mcpServers": {
     "gbrain-memory": {
       "type": "http",
-      "url": "https://mcp.orgrimmar.xyz/memory/mcp",
+      "url": "https://mcp.example.com/memory/mcp",
       "headers": {"Authorization": "Bearer test-token-aaaaaaaaaaaa"}
     },
     "gbrain-recall": {
       "type": "http",
-      "url": "https://mcp.orgrimmar.xyz/recall/mcp",
+      "url": "https://mcp.example.com/recall/mcp",
       "headers": {"Authorization": "Bearer test-token-aaaaaaaaaaaa"}
     },
     "gbrain-swarm": {
       "type": "http",
-      "url": "https://mcp.orgrimmar.xyz/swarm/mcp",
+      "url": "https://mcp.example.com/swarm/mcp",
       "headers": {"Authorization": "Bearer test-token-aaaaaaaaaaaa"}
     }
   }

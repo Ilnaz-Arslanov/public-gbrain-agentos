@@ -231,12 +231,12 @@ def test_agent_gateways_parser_backward_compat(monkeypatch: pytest.MonkeyPatch) 
     """Existing AGENT_GATEWAYS JSON map continues to parse unchanged."""
     monkeypatch.setenv(
         "AGENT_GATEWAYS",
-        json.dumps({"claude": "http://example/claude", "thrall": "http://example/thrall"}),
+        json.dumps({"claude": "http://example/claude", "forge": "http://example/forge"}),
     )
     monkeypatch.delenv("AGENT_GATEWAY_AUTH", raising=False)
     worker = _reload_worker(monkeypatch)
     gws = worker._load_gateways()
-    assert gws == {"claude": "http://example/claude", "thrall": "http://example/thrall"}
+    assert gws == {"claude": "http://example/claude", "forge": "http://example/forge"}
 
 
 def test_gateway_auth_for_falls_back_to_legacy_bearer(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -280,7 +280,7 @@ class _RecordingClient:
         return self.response
 
 
-def _make_row(to_agent: str = "claude", task_id: str = "t-1", from_agent: str = "silvana") -> dict[str, Any]:
+def _make_row(to_agent: str = "claude", task_id: str = "t-1", from_agent: str = "nova") -> dict[str, Any]:
     return {
         "id": 1,
         "task_id": task_id,
@@ -355,7 +355,7 @@ def test_worker_body_unchanged_between_sign_and_post(monkeypatch: pytest.MonkeyP
     client = _RecordingClient()
     gateways = {"tyrande": "http://gw/tyrande"}
     auth_map = worker._load_gateway_auth()
-    row = _make_row("tyrande", task_id="t-integ", from_agent="silvana")
+    row = _make_row("tyrande", task_id="t-integ", from_agent="nova")
 
     status, _ = asyncio.run(worker._deliver_one(client, gateways, row, auth_map))
     assert status == "acked"

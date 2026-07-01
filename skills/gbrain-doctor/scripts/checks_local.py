@@ -102,7 +102,7 @@ _WEBHOOK_ERROR_HINTS: tuple[tuple[re.Pattern[str], str], ...] = (
 )
 
 # Hetzner gbrain backend IP — already public in repo docs, safe to show.
-_KNOWN_PUBLIC_BACKEND_IP = "65.109.137.239"
+_KNOWN_PUBLIC_BACKEND_IP = "203.0.113.10"
 
 
 # ---------------------------------------------------------------------------

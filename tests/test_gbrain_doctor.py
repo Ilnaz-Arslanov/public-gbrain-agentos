@@ -183,11 +183,11 @@ async def test_check_bearer_mapping_all_matched(tmp_path):
     digest = hashlib.sha256((salt + raw).encode()).hexdigest()
     p = _write_mcp_json(tmp_path, [raw])
     conn = MagicMock()
-    conn.fetchrow = AsyncMock(return_value={"agent": "silvana"})
+    conn.fetchrow = AsyncMock(return_value={"agent": "nova"})
 
     res = await doc.check_bearer_mapping(conn, p, salt)
     assert res.status == "pass"
-    assert "silvana" in res.message
+    assert "nova" in res.message
     # Critical: the raw token never appears anywhere in the result text.
     assert raw not in res.message
     conn.fetchrow.assert_awaited_with(
@@ -221,7 +221,7 @@ async def test_doctor_never_prints_raw_bearer(tmp_path, capsys):
     raw = "supersecret1a533549abcdef0123456789xyzZZZ7f3c"
     p = _write_mcp_json(tmp_path, [raw])
     conn = MagicMock()
-    conn.fetchrow = AsyncMock(return_value={"agent": "silvana"})
+    conn.fetchrow = AsyncMock(return_value={"agent": "nova"})
 
     result = await doc.check_bearer_mapping(conn, p, "salt")
     # Render through both code paths.

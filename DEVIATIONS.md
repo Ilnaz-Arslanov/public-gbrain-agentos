@@ -16,7 +16,7 @@ What I did instead:
   fully tested via direct calls.
 - Left existing memory_mcp tool call sites using
   `_extract_token + authenticate` (Bearer-only). They continue to
-  work for Bearer agents (`claude`, `kaelthas`, etc.) unchanged.
+  work for Bearer agents (`claude`, `orion`, etc.) unchanged.
 - Left existing recall tools without `_resolve_reader` wiring.
 
 Why:
@@ -142,7 +142,7 @@ Bearer-only `_extract_token + authenticate` path.
   HMAC ContextVar → `_authenticate_request(None, pool)` → AgentContext
   with `agent == "tyrande"`, then simulates the tool's `log_audit` write
   and asserts the captured audit row carries `agent="tyrande"`, not
-  silvana fallback.
+  nova fallback.
 - `tests/test_hmac_auth.py::test_recall_mcp_recall_via_hmac_authenticates_correctly` —
   symmetric coverage for `_resolve_reader`.
 - `tests/test_hmac_auth.py::test_recall_tools_actually_call_resolve_reader` —
@@ -206,8 +206,8 @@ addresses all of them in a single commit.
 `create_error_pattern_note` all computed
 `resolved_agent = agent or agent_ctx.agent` and threaded that into
 both ``documents.agent`` and ``audit_log.agent``. An HMAC-authenticated
-``tyrande`` could pass ``agent="silvana"`` and the audit row would
-attribute the write to silvana. Identity spoof, security boundary
+``tyrande`` could pass ``agent="nova"`` and the audit row would
+attribute the write to nova. Identity spoof, security boundary
 collapse.
 
 **Now:** ``resolved_agent = agent_ctx.agent`` always. The optional
