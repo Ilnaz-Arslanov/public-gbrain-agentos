@@ -17,11 +17,11 @@ SSE `data:` frame.
 export GBRAIN_TOKEN="$(cat ~/.secrets/gbrain-token)"
 
 # Endpoints — take the exact URLs from this agent's .mcp.json.
-export MEMORY_URL="https://mcp.orgrimmar.xyz/memory/mcp"
-export SWARM_URL="https://mcp.orgrimmar.xyz/swarm/mcp"
+export MEMORY_URL="https://mcp.example.com/memory/mcp"
+export SWARM_URL="https://mcp.example.com/swarm/mcp"
 
 # The agent you are checking (used as to_agent for the self-notify roundtrip).
-export AGENT="silvana"
+export AGENT="nova"
 ```
 
 Shared helper — POST a `tools/call` and print the parsed result. Redacts nothing on its own, so

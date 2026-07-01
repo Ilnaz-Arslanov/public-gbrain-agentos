@@ -268,7 +268,7 @@ def _collect_layers(ctx: "DoctorContext") -> list[SettingsLayer]:
     global_layer = _read_layer(home / ".claude" / "settings.json", "~/.claude", "global")
 
     # ``ctx.workspace_root`` ALREADY points at the ``<agent>/.claude`` directory
-    # (e.g. ``~/.claude-lab/silvana/.claude``), so settings files live directly
+    # (e.g. ``~/.claude-lab/nova/.claude``), so settings files live directly
     # under it — NOT under a nested ``.claude``. (C033/C034 use ``ws/"core/..."``
     # for the same reason.)
     ws = ctx.workspace_root

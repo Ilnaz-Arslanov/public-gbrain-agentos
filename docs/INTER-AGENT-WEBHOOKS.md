@@ -58,18 +58,18 @@ worker помечает outbox: status=acked, цикл закрыт
 
 ```python
 result = mcp__gbrain-swarm__notify(
-    to_agent="kaelthas",  # canonical agent id, без префиксов sa-/agent-
+    to_agent="orion",  # canonical agent id, без префиксов sa-/agent-
     payload={
         "type": "task_assigned",   # или ping, content_request, escalation, etc
         "task_id": 42,
         "title": "Напиши пост про X",
-        "from_agent": "silvana",
+        "from_agent": "nova",
         "priority": "high",
     },
     max_attempts=5,  # default
     task_id=None,    # auto-generated если не передан
 )
-# returns: {"task_id": "silvana::kaelthas::abc123", "status": "pending"}
+# returns: {"task_id": "nova::orion::abc123", "status": "pending"}
 ```
 
 ### Что worker делает дальше
@@ -79,12 +79,12 @@ result = mcp__gbrain-swarm__notify(
 ### Debugging доставки
 
 ```python
-delivery = mcp__gbrain-swarm__get_delivery(task_id="silvana::kaelthas::abc123")
+delivery = mcp__gbrain-swarm__get_delivery(task_id="nova::orion::abc123")
 # returns:
 # {
 #   "task_id": "...",
-#   "from_agent": "silvana",
-#   "to_agent": "kaelthas",
+#   "from_agent": "nova",
+#   "to_agent": "orion",
 #   "status": "pending" | "acked" | "failed",
 #   "attempts": 3,
 #   "max_attempts": 5,
@@ -157,7 +157,7 @@ git clone https://github.com/qwwiwi/dashi-plugin-claude-code.git plugin
 cd plugin && npm install
 # Backup current workspace .mcp.json + settings.json
 # Edit channel.env: bot token, webhook port, workspace path
-sudo cp examples/channel-thrall.service /etc/systemd/system/  # пример, переименуй под agent-id
+sudo cp examples/channel-forge.service /etc/systemd/system/  # пример, переименуй под agent-id
 sudo systemctl daemon-reload && sudo systemctl enable --now channel-<agent>
 ```
 
@@ -186,8 +186,8 @@ Hermes daemon забирает inbox через свой native message handler 
 ```bash
 # 1. Сохрани token (chmod 600):
 mkdir -p ~/.secrets
-echo "<raw_webhook_token>" > ~/.secrets/illidan-webhook.token
-chmod 600 ~/.secrets/illidan-webhook.token
+echo "<raw_webhook_token>" > ~/.secrets/atlas-webhook.token
+chmod 600 ~/.secrets/atlas-webhook.token
 
 # 2. launchd plist:
 cat > ~/Library/LaunchAgents/ai.gbrain.hermes-webhook.plist <<'PLIST'
@@ -199,12 +199,12 @@ cat > ~/Library/LaunchAgents/ai.gbrain.hermes-webhook.plist <<'PLIST'
     <key>ProgramArguments</key>
     <array>
         <string>/usr/bin/python3</string>
-        <string>/Users/YOU/hermes-agents/Illidan/scripts/webhook_listener.py</string>
+        <string>/Users/YOU/hermes-agents/atlas/scripts/webhook_listener.py</string>
     </array>
     <key>EnvironmentVariables</key>
     <dict>
         <key>WEBHOOK_PORT</key><string>8091</string>
-        <key>WEBHOOK_BEARER_FILE</key><string>/Users/YOU/.secrets/illidan-webhook.token</string>
+        <key>WEBHOOK_BEARER_FILE</key><string>/Users/YOU/.secrets/atlas-webhook.token</string>
         <key>HERMES_INBOX_DIR</key><string>/Users/YOU/.hermes/inbox</string>
     </dict>
     <key>KeepAlive</key><true/>
@@ -218,7 +218,7 @@ PLIST
 launchctl load ~/Library/LaunchAgents/ai.gbrain.hermes-webhook.plist
 # Verify:
 curl -X POST http://127.0.0.1:8091/webhook \
-    -H "Authorization: Bearer $(cat ~/.secrets/illidan-webhook.token)" \
+    -H "Authorization: Bearer $(cat ~/.secrets/atlas-webhook.token)" \
     -H "Content-Type: application/json" \
     -d '{"type":"ping","from_agent":"smoke"}'
 # Expect: 200 OK, ls ~/.hermes/inbox/ показывает новый JSON
@@ -236,8 +236,8 @@ Requires=network-online.target
 [Service]
 Type=simple
 User=hermes
-WorkingDirectory=/home/hermes/hermes-agents/Illidan
-ExecStart=/usr/bin/python3 /home/hermes/hermes-agents/Illidan/scripts/webhook_listener.py
+WorkingDirectory=/home/hermes/hermes-agents/atlas
+ExecStart=/usr/bin/python3 /home/hermes/hermes-agents/atlas/scripts/webhook_listener.py
 EnvironmentFile=/etc/hermes/webhook.env
 Restart=on-failure
 RestartSec=10

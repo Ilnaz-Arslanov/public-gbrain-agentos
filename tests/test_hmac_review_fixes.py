@@ -98,9 +98,9 @@ async def test_audit_uses_authenticated_agent_not_param(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """C1: HMAC-authenticated tyrande passes ``agent="silvana"``; the
+    """C1: HMAC-authenticated tyrande passes ``agent="nova"``; the
     decision tool MUST still stamp audit_log.agent == "tyrande" and
-    surface "silvana" only as ``declared_author`` in frontmatter.
+    surface "nova" only as ``declared_author`` in frontmatter.
     """
     from services.memory_mcp.tools import _REQUEST_AUTH, _authenticate_request
 
@@ -126,8 +126,8 @@ async def test_audit_uses_authenticated_agent_not_param(
     assert agent_ctx.agent == "tyrande"
 
     # Now simulate the C1 fix at the tool level: even when the caller
-    # passes ``agent="silvana"``, the audit identity stays authenticated.
-    spoofed_agent_param = "silvana"
+    # passes ``agent="nova"``, the audit identity stays authenticated.
+    spoofed_agent_param = "nova"
     resolved_agent = agent_ctx.agent
     declared_author = (
         spoofed_agent_param
@@ -136,7 +136,7 @@ async def test_audit_uses_authenticated_agent_not_param(
     )
 
     assert resolved_agent == "tyrande", "audit must be authenticated agent"
-    assert declared_author == "silvana", "spoofed agent surfaces only as declared_author"
+    assert declared_author == "nova", "spoofed agent surfaces only as declared_author"
 
 
 def test_c1_decision_tools_use_authenticated_agent_for_audit() -> None:
@@ -250,7 +250,7 @@ def test_restrict_read_scopes_intersects_with_token() -> None:
 def test_recall_rejects_star_for_non_wildcard_token() -> None:
     """C3: ``["*"]`` only honored when the token itself has '*'."""
     # Wildcard token: '*' echoed back.
-    full = AgentContext(agent="silvana", write_scopes=[], read_scopes=["*"])
+    full = AgentContext(agent="nova", write_scopes=[], read_scopes=["*"])
     assert restrict_read_scopes(full, ["*"]) == ["*"]
     assert restrict_read_scopes(full, None) == ["*"]
     # Restricted token: '*' expands to the explicit list (NOT a wildcard).
@@ -267,7 +267,7 @@ def test_recall_rejects_star_for_non_wildcard_token() -> None:
 
 def test_check_read_scope_wildcard_and_explicit() -> None:
     """C3: check_read_scope honors wildcard and explicit scope membership."""
-    wild = AgentContext(agent="silvana", write_scopes=[], read_scopes=["*"])
+    wild = AgentContext(agent="nova", write_scopes=[], read_scopes=["*"])
     assert check_read_scope(wild, "anything") is True
     only = AgentContext(agent="tyrande", write_scopes=[], read_scopes=["30-decisions"])
     assert check_read_scope(only, "30-decisions") is True
@@ -346,7 +346,7 @@ async def test_get_authorizes_target_doc_scope(
             "frontmatter": {},
             "body": "secret body",
             "source_type": "runbook",
-            "agent": "silvana",
+            "agent": "nova",
             "scope": "70-runbooks",
             "created_at": None,
             "updated_at": None,
@@ -551,7 +551,7 @@ async def test_memory_create_decision_note_real_handler_via_hmac(
             title="Test C1 audit",
             body="The body",
             tags=["test"],
-            agent="silvana",  # spoof attempt
+            agent="nova",  # spoof attempt
         )
     finally:
         tmod._REQUEST_AUTH.reset(tok)
@@ -565,7 +565,7 @@ async def test_memory_create_decision_note_real_handler_via_hmac(
     # frontmatter.agent should be tyrande (authenticated identity)
     assert "agent: tyrande" in md
     # declared_author preserves the spoofed value for human review
-    assert "declared_author: silvana" in md
+    assert "declared_author: nova" in md
     # audit_log recorded with the authenticated agent.
     assert audit_calls, "expected at least one audit row"
     assert audit_calls[-1]["agent"] == "tyrande"

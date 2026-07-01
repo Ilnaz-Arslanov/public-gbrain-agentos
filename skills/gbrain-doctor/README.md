@@ -33,18 +33,18 @@ anyone escalates to the host.
 
 ```bash
 # Full read-only run for an agent
-python3 skills/gbrain-doctor/scripts/gbrain_doctor.py --agent silvana
+python3 skills/gbrain-doctor/scripts/gbrain_doctor.py --agent nova
 
 # Hooks parity only, no color
-python3 skills/gbrain-doctor/scripts/gbrain_doctor.py --agent silvana --group G6 --no-color
+python3 skills/gbrain-doctor/scripts/gbrain_doctor.py --agent nova --group G6 --no-color
 
 # Machine-readable JSON, exit code only
-python3 skills/gbrain-doctor/scripts/gbrain_doctor.py --agent silvana --json --quiet
+python3 skills/gbrain-doctor/scripts/gbrain_doctor.py --agent nova --json --quiet
 
 # Explicit .mcp.json path (outside the agent workspace)
 python3 skills/gbrain-doctor/scripts/gbrain_doctor.py \
-  --agent silvana \
-  --mcp-json /Users/you/.claude-lab/silvana/.claude/.mcp.json \
+  --agent nova \
+  --mcp-json /Users/you/.claude-lab/nova/.claude/.mcp.json \
   --no-color
 ```
 
@@ -179,7 +179,7 @@ applying this to a live agent requires the prince's/operator's approval. Target 
 
 ```markdown
 **Shared gbrain memory:**
-- gbrain is the shared long-term memory for Orgrimmar agents.
+- gbrain is the shared long-term memory for myfleet agents.
 - Use it when continuity matters across sessions, agents, or machines.
 - Before non-trivial work, consider recall for prior decisions, runbooks, failures, and handoffs.
 - When you discover durable facts, decisions, fixes, or reusable procedures, consider saving a concise note.
