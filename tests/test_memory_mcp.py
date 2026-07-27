@@ -1,5 +1,6 @@
 """Unit tests for memory-mcp helpers + shared auth/audit and adjacent modules."""
 import hashlib
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -102,11 +103,29 @@ class TestSlugify:
     def test_leading_trailing_dashes_stripped(self) -> None:
         assert _slugify("---hello---") == "hello"
 
-    def test_empty_string(self) -> None:
-        assert _slugify("") == ""
+    def test_cyrillic_transliterated(self) -> None:
+        assert _slugify("Решение по налогам") == "reshenie-po-nalogam"
 
-    def test_only_special_chars(self) -> None:
-        assert _slugify("!@#$%^&*()") == ""
+    def test_cyrillic_distinct_titles_distinct_slugs(self) -> None:
+        # Root of the collision bug: two different Cyrillic titles must not
+        # collapse onto the same (empty) slug.
+        a = _slugify("Первое решение")
+        b = _slugify("Второе решение")
+        assert a != b
+        assert a and b
+
+    def test_empty_string_falls_back_to_hash(self) -> None:
+        assert re.fullmatch(r"n[0-9a-f]{8}", _slugify(""))
+
+    def test_only_special_chars_falls_back_to_hash(self) -> None:
+        assert re.fullmatch(r"n[0-9a-f]{8}", _slugify("!@#$%^&*()"))
+
+    def test_distinct_unslugifiable_titles_distinct_hashes(self) -> None:
+        # Emoji-only / CJK titles produce no ASCII base — hash keeps them apart.
+        assert _slugify("日本語") != _slugify("中文")
+
+    def test_idempotent(self) -> None:
+        assert _slugify("Одна и та же заметка") == _slugify("Одна и та же заметка")
 
 
 # -----------------------------------------------------------------------

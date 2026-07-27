@@ -174,9 +174,35 @@ def _require_slots_write(agent_ctx: AgentContext) -> None:
         )
 
 
+_RU_TRANSLIT = {
+    "а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e",
+    "ё": "e", "ж": "zh", "з": "z", "и": "i", "й": "y", "к": "k",
+    "л": "l", "м": "m", "н": "n", "о": "o", "п": "p", "р": "r",
+    "с": "s", "т": "t", "у": "u", "ф": "f", "х": "h", "ц": "c",
+    "ч": "ch", "ш": "sh", "щ": "sch", "ъ": "", "ы": "y", "ь": "",
+    "э": "e", "ю": "yu", "я": "ya",
+}
+
+
+def _transliterate(text: str) -> str:
+    """Best-effort transliteration of Russian Cyrillic to ASCII."""
+    return "".join(_RU_TRANSLIT.get(ch, ch) for ch in text)
+
+
 def _slugify(title: str) -> str:
-    """Generate a URL-safe slug from a title."""
-    return re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:MAX_SLUG_LENGTH]
+    """Generate a URL-safe slug from a title.
+
+    Cyrillic is transliterated to ASCII first so Russian titles yield a
+    meaningful, distinct slug. If normalization still leaves nothing
+    (emoji-only, CJK, punctuation-only titles), fall back to a short
+    content hash so every distinct title maps to a distinct path —
+    otherwise all such titles collapse onto one file (date + empty slug)
+    and silently overwrite each other via ON CONFLICT (path).
+    """
+    base = re.sub(r"[^a-z0-9]+", "-", _transliterate(title.lower())).strip("-")
+    if not base:
+        return "n" + _sha256(title)[:8]
+    return base[:MAX_SLUG_LENGTH]
 
 
 def _today_iso() -> str:
