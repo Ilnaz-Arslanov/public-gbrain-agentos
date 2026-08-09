@@ -146,6 +146,35 @@ async def mark_retry(
     return "pending"
 
 
+async def mark_deferred(
+    conn: asyncpg.Connection,
+    row_id: int,
+    last_error: str,
+    delay_seconds: int,
+) -> str:
+    """Postpone a row WITHOUT consuming a delivery attempt.
+
+    A missing gateway address is not a failed delivery attempt -- nothing was
+    ever sent. Counting it as one burns all five attempts in ~2 minutes and
+    moves the row to 'failed', which also hides it from
+    :func:`list_pending_for` -- so a pull-based agent (Hermes/Daisy) can never
+    fetch mail addressed to it. Keeping the row 'pending' preserves both the
+    push retry (once the operator wires the gateway) and the pull path.
+    """
+    await conn.execute(
+        """
+        UPDATE delivery_outbox
+        SET next_retry_at = now() + ($2 || ' seconds')::interval,
+            updated_at = now()
+        WHERE id = $1
+        """,
+        row_id,
+        str(delay_seconds),
+    )
+    logger.info("outbox.deferred id=%d delay=%ds reason=%s", row_id, delay_seconds, last_error[:120])
+    return "pending"
+
+
 async def bootstrap_recovery(pool: asyncpg.Pool) -> int:
     """Reset rows stuck in 'sent' or 'ack_missing' back to 'pending' on startup.
 

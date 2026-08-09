@@ -47,6 +47,10 @@ logger = logging.getLogger(__name__)
 POLL_INTERVAL_SEC = 5
 HTTP_TIMEOUT_SEC = 10
 BATCH_SIZE = 20
+# A target with no gateway URL never had a delivery attempted, so it must not
+# consume attempts -- re-check on a slow timer instead. See outbox.mark_deferred.
+DEFER_NO_GATEWAY_SEC = 300
+NO_GATEWAY_PREFIX = "no gateway URL"
 
 # Bridge to a Telegram/HTTP gateway which expects POST {agentId, message, chatId}.
 # Configure with env: OWNER_CHAT_ID (Telegram chat for forwarded prompts),
@@ -164,6 +168,77 @@ def _hmac_outbound_enabled() -> bool:
     return os.environ.get("GBRAIN_HMAC_OUTBOUND_ENABLED", "1") != "0"
 
 
+# Payload keys consumed by the prompt template itself — never repeated in the
+# rendered body. Everything else in the payload is content and must survive.
+_RENDER_RESERVED_KEYS = frozenset(
+    {"title", "body", "message", "urgency", "_priority", "_escalation_reason", "_smoke", "kind", "from"}
+)
+# Hard cap on the rendered body so one oversized payload cannot blow up the
+# gateway request. Truncation is visible, never silent.
+_RENDER_BODY_LIMIT = 4000
+
+
+def _render_section(key: str, value: object) -> str:
+    """Render one leftover payload field as a readable prompt section.
+
+    Scalars become ``Key: value``, lists become bullet lists, anything else
+    falls back to compact JSON. Never raises — an unserializable value degrades
+    to ``repr``.
+    """
+    label = str(key).replace("_", " ").strip().capitalize()
+    if isinstance(value, str):
+        return f"{label}: {value.strip()}"
+    if isinstance(value, (int, float, bool)):
+        return f"{label}: {value}"
+    if isinstance(value, list):
+        lines = []
+        for item in value:
+            text = item if isinstance(item, str) else json.dumps(item, ensure_ascii=False)
+            lines.append(f"- {text}")
+        return f"{label}:\n" + "\n".join(lines)
+    try:
+        return f"{label}: {json.dumps(value, ensure_ascii=False)}"
+    except (TypeError, ValueError):
+        return f"{label}: {value!r}"
+
+
+def _render_payload_body(payload: dict) -> str:
+    """Build the human-readable body of an inter-agent letter.
+
+    The historical contract was ``{title, body}`` only: any sender using other
+    field names (``message``, ``facts``, ``sources``, ...) delivered a letter
+    with an empty body, and the receiving agent saw nothing to act on. This
+    renderer puts ``body`` (or ``message``) first and then appends every
+    remaining non-reserved field as its own section, so no payload content is
+    ever silently dropped — not even when ``body`` is present alongside extra
+    fields.
+
+    Args:
+        payload: Raw inter-agent payload as stored in ``delivery_outbox``.
+
+    Returns:
+        Rendered body text (possibly empty if the payload carried no content),
+        truncated to ``_RENDER_BODY_LIMIT`` with an explicit marker.
+    """
+    parts: list[str] = []
+    for lead in ("body", "message"):
+        value = payload.get(lead)
+        if isinstance(value, str) and value.strip():
+            parts.append(value.strip())
+            break
+    for key, value in payload.items():
+        if key in _RENDER_RESERVED_KEYS or str(key).startswith("_"):
+            continue
+        if value is None or value == "" or value == [] or value == {}:
+            continue
+        parts.append(_render_section(key, value))
+
+    rendered = "\n\n".join(parts)
+    if len(rendered) > _RENDER_BODY_LIMIT:
+        rendered = rendered[:_RENDER_BODY_LIMIT] + "\n... [truncated by swarm-worker]"
+    return rendered
+
+
 def _format_virtual_prompt(from_agent: str, to_agent: str, task_id: str, payload: dict) -> str:
     """Pack inter-agent payload into a chat-style prompt the agent will see.
 
@@ -176,8 +251,8 @@ def _format_virtual_prompt(from_agent: str, to_agent: str, task_id: str, payload
       smoke pings via `_smoke=true`. These skip the full report + dual-notify flow
       which would otherwise cause infinite recursion (coordinator → coordinator).
     """
-    title = payload.get("title") or "(no title)"
-    body = payload.get("body") or ""
+    title = payload.get("title") or payload.get("kind") or "(no title)"
+    body = _render_payload_body(payload)
     urgency = payload.get("urgency") or payload.get("_priority") or "normal"
     reason = payload.get("_escalation_reason") or ""
     extra = ""
@@ -381,6 +456,10 @@ async def run() -> None:
                                 )
                                 logger.warning("delivery failed permanently id=%d to=%s err=%s",
                                                row["id"], row["to_agent"], last_error[:120])
+                            elif last_error.startswith(NO_GATEWAY_PREFIX):
+                                await outbox.mark_deferred(
+                                    conn, row["id"], last_error, DEFER_NO_GATEWAY_SEC,
+                                )
                             else:  # retry
                                 await outbox.mark_retry(
                                     conn, row["id"], row["attempts"] + 1,
