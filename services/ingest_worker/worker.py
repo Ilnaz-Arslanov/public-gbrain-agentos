@@ -168,11 +168,21 @@ async def run_worker() -> None:
                                     "Job %d failed", row["id"]
                                 )
                                 await sp.rollback()
-                                await conn.execute(
-                                    SQL_UPDATE_STATUS,
-                                    row["id"],
-                                    "failed",
-                                )
+                                # Marking the job failed must never crash the
+                                # worker: if this UPDATE itself raises (e.g. an
+                                # aborted outer tx), log and move on instead of
+                                # letting the exception kill the process.
+                                try:
+                                    await conn.execute(
+                                        SQL_UPDATE_STATUS,
+                                        row["id"],
+                                        "failed",
+                                    )
+                                except Exception:
+                                    logger.exception(
+                                        "Job %d: could not mark as failed",
+                                        row["id"],
+                                    )
 
             if not rows and not _shutdown.requested:
                 await asyncio.sleep(POLL_SLEEP_SEC)
