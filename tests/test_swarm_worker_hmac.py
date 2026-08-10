@@ -23,10 +23,12 @@ import pytest
 
 from services.shared import hmac_sign
 from services.shared.hmac_sign import (
+    GITHUB_SIGNATURE_HEADER,
     SIGNATURE_HEADER,
     TIMESTAMP_HEADER,
     parse_signature_header,
     sign_request,
+    sign_request_github,
     verify_signature,
 )
 
@@ -435,3 +437,114 @@ def test_worker_missing_gateway_url_still_retries(monkeypatch: pytest.MonkeyPatc
     status, err = asyncio.run(worker._deliver_one(client, {}, _make_row("unknown"), {}))
     assert status == "retry"
     assert "no gateway URL" in err
+
+
+# ---------------------------------------------------------------------------
+# GitHub-style signing (hmac_github) — what the Hermes gateway's own webhook
+# routes verify. Wrong scheme against such a route yields HTTP 401.
+# ---------------------------------------------------------------------------
+
+
+def test_sign_request_github_returns_body_only_signature() -> None:
+    """The GitHub scheme signs the raw body with no timestamp prefix."""
+    secret = b"super-secret"
+    body = b'{"a":1}'
+    headers = sign_request_github(secret, body)
+
+    expected_hex = hmac.new(secret, body, hashlib.sha256).hexdigest()
+    assert headers[GITHUB_SIGNATURE_HEADER] == f"sha256={expected_hex}"
+    assert set(headers.keys()) == {GITHUB_SIGNATURE_HEADER}
+
+
+def test_sign_request_github_differs_from_hermes_scheme() -> None:
+    """The two schemes must never collide — that mismatch is the 401 bug."""
+    secret, body = b"s", b'{"a":1}'
+    hermes = sign_request(secret, body, timestamp=1_700_000_000)
+    github = sign_request_github(secret, body)
+    assert hermes[SIGNATURE_HEADER] != github[GITHUB_SIGNATURE_HEADER]
+
+
+def test_sign_request_github_rejects_non_bytes() -> None:
+    with pytest.raises(TypeError):
+        sign_request_github("not-bytes", b"body")  # type: ignore[arg-type]
+    with pytest.raises(TypeError):
+        sign_request_github(b"secret", "not-bytes")  # type: ignore[arg-type]
+
+
+def test_load_gateway_auth_parses_hmac_github(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DAISY_HMAC", "daisy-secret")
+    monkeypatch.setenv("AGENT_GATEWAY_AUTH", json.dumps({"daisy": "hmac_github:env:DAISY_HMAC"}))
+    worker = _reload_worker(monkeypatch)
+
+    auth_map = worker._load_gateway_auth()
+    assert auth_map["daisy"].mode == "hmac_github"
+    assert auth_map["daisy"].value == "daisy-secret"
+
+
+def test_worker_signs_with_github_scheme_when_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+    """hmac_github target gets X-Hub-Signature-256 over the exact posted bytes."""
+    monkeypatch.setenv("DAISY_HMAC", "daisy-secret")
+    monkeypatch.setenv("AGENT_GATEWAY_AUTH", json.dumps({"daisy": "hmac_github:env:DAISY_HMAC"}))
+    monkeypatch.delenv("GATEWAY_WEBHOOK_TOKEN", raising=False)
+    worker = _reload_worker(monkeypatch)
+
+    client = _RecordingClient()
+    gateways = {"daisy": "http://gw/daisy"}
+    auth_map = worker._load_gateway_auth()
+
+    status, _err = asyncio.run(worker._deliver_one(client, gateways, _make_row("daisy"), auth_map))
+    assert status == "acked"
+    headers = client.calls[0]["headers"]
+    assert GITHUB_SIGNATURE_HEADER in headers
+    # The timestamped Hermes headers must NOT leak into a GitHub-scheme request
+    assert SIGNATURE_HEADER not in headers
+    assert TIMESTAMP_HEADER not in headers
+    assert "Authorization" not in headers
+
+    posted = client.calls[0]["content"]
+    expected = hmac.new(b"daisy-secret", posted, hashlib.sha256).hexdigest()
+    assert headers[GITHUB_SIGNATURE_HEADER] == f"sha256={expected}"
+
+
+def test_worker_github_scheme_respects_outbound_kill_switch(monkeypatch: pytest.MonkeyPatch) -> None:
+    """GBRAIN_HMAC_OUTBOUND_ENABLED=0 defers hmac_github the same as hmac."""
+    monkeypatch.setenv("DAISY_HMAC", "daisy-secret")
+    monkeypatch.setenv("AGENT_GATEWAY_AUTH", json.dumps({"daisy": "hmac_github:env:DAISY_HMAC"}))
+    monkeypatch.setenv("GBRAIN_HMAC_OUTBOUND_ENABLED", "0")
+    worker = _reload_worker(monkeypatch)
+
+    client = _RecordingClient()
+    status, err = asyncio.run(
+        worker._deliver_one(client, {"daisy": "http://gw/daisy"}, _make_row("daisy"), worker._load_gateway_auth())
+    )
+    assert status == "retry"
+    assert "hmac_outbound_disabled" in err
+    assert client.calls == []
+
+
+def test_worker_mixed_hermes_and_github_schemes_in_batch(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Both HMAC dialects coexist in one round without cross-contamination."""
+    monkeypatch.setenv("TYRANDE_HMAC", "tyrande-secret")
+    monkeypatch.setenv("DAISY_HMAC", "daisy-secret")
+    monkeypatch.setenv(
+        "AGENT_GATEWAY_AUTH",
+        json.dumps({"tyrande": "hmac:env:TYRANDE_HMAC", "daisy": "hmac_github:env:DAISY_HMAC"}),
+    )
+    monkeypatch.delenv("GATEWAY_WEBHOOK_TOKEN", raising=False)
+    worker = _reload_worker(monkeypatch)
+
+    client = _RecordingClient()
+    gateways = {"tyrande": "http://gw/tyrande", "daisy": "http://gw/daisy"}
+    auth_map = worker._load_gateway_auth()
+
+    async def _both() -> tuple[str, str]:
+        s1, _ = await worker._deliver_one(client, gateways, _make_row("tyrande", task_id="t-1"), auth_map)
+        s2, _ = await worker._deliver_one(client, gateways, _make_row("daisy", task_id="t-2"), auth_map)
+        return s1, s2
+
+    s1, s2 = asyncio.run(_both())
+    assert (s1, s2) == ("acked", "acked")
+
+    hermes_headers, github_headers = client.calls[0]["headers"], client.calls[1]["headers"]
+    assert SIGNATURE_HEADER in hermes_headers and GITHUB_SIGNATURE_HEADER not in hermes_headers
+    assert GITHUB_SIGNATURE_HEADER in github_headers and SIGNATURE_HEADER not in github_headers

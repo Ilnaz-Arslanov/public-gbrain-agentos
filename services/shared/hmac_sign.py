@@ -4,9 +4,15 @@ Pure stdlib helpers — no asyncpg, no logging of secret material. Used by the
 swarm worker for outbound webhook signing and by tests of inbound signature
 verification flows.
 
-Wire format:
-- ``X-Hermes-Signature: sha256=<lowercase_hex>``
-- ``X-Hermes-Timestamp: <unix_seconds_as_string>``
+Two wire formats live here, deliberately kept apart:
+
+1. Hermes/Stripe (default, this module's primary scheme):
+   - ``X-Hermes-Signature: sha256=<lowercase_hex>``
+   - ``X-Hermes-Timestamp: <unix_seconds_as_string>``
+2. GitHub-style, verified by the Hermes gateway's own ``hermes webhook``
+   adapter — see :func:`sign_request_github`:
+   - ``X-Hub-Signature-256: sha256=<lowercase_hex>`` over the raw body,
+     no timestamp.
 
 The signature is computed as
 ``hmac.HMAC(secret, f"{timestamp}.".encode() + body, sha256).hexdigest()``
@@ -38,6 +44,9 @@ from collections.abc import Callable
 
 SIGNATURE_HEADER = "X-Hermes-Signature"
 TIMESTAMP_HEADER = "X-Hermes-Timestamp"
+# GitHub-style wire format, used by the Hermes gateway's own webhook adapter
+# (``hermes webhook``). Body-only signature, no timestamp header.
+GITHUB_SIGNATURE_HEADER = "X-Hub-Signature-256"
 _SCHEME_PREFIX = "sha256="
 
 
@@ -65,6 +74,51 @@ def compute_digest(secret: bytes, body: bytes, timestamp: int) -> str:
     """
     message = f"{int(timestamp)}.".encode("ascii") + bytes(body)
     return hmac.new(bytes(secret), message, hashlib.sha256).hexdigest()
+
+
+def compute_digest_github(secret: bytes, body: bytes) -> str:
+    """Compute the GitHub-style HMAC-SHA256 hex digest over the raw body.
+
+    Unlike :func:`compute_digest`, nothing is prefixed to the body — the
+    signing string is the transmitted bytes themselves. This is the scheme the
+    Hermes gateway's webhook adapter verifies (``X-Hub-Signature-256``), and it
+    is deliberately kept separate from the Hermes/Stripe timestamped scheme so
+    neither can silently drift into the other.
+
+    Args:
+        secret: Raw HMAC secret bytes (never logged).
+        body: Exact request body bytes that will be transmitted.
+
+    Returns:
+        Lowercase hex SHA-256 digest (64 chars).
+    """
+    return hmac.new(bytes(secret), bytes(body), hashlib.sha256).hexdigest()
+
+
+def sign_request_github(secret: bytes, body: bytes) -> dict[str, str]:
+    """Compute the GitHub-style HMAC header for an outbound request.
+
+    Args:
+        secret: Raw HMAC secret bytes (never logged).
+        body: Exact request body bytes that will be transmitted. The caller
+            must POST these identical bytes; any re-serialization invalidates
+            the signature.
+
+    Returns:
+        Mapping with one header:
+        ``{"X-Hub-Signature-256": "sha256=<hex>"}``
+
+    Notes:
+        This scheme carries no timestamp, so it has no replay protection of its
+        own — the receiving side is responsible for that. Prefer
+        :func:`sign_request` unless the target verifies the GitHub format.
+    """
+    if not isinstance(secret, (bytes, bytearray)):
+        raise TypeError("secret must be bytes")
+    if not isinstance(body, (bytes, bytearray)):
+        raise TypeError("body must be bytes")
+
+    return {GITHUB_SIGNATURE_HEADER: f"{_SCHEME_PREFIX}{compute_digest_github(secret, body)}"}
 
 
 def sign_request(

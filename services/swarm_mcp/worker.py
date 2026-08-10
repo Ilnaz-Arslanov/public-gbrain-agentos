@@ -9,7 +9,13 @@ Per-agent outbound auth (extension 2026-05-17, Hermes integration):
 - ``AGENT_GATEWAYS`` remains the existing JSON map ``{agent: url}``.
 - Optional ``AGENT_GATEWAY_AUTH`` JSON map selects auth mode per agent:
   ``{"tyrande": "hmac:env:TYRANDE_WEBHOOK_HMAC",
+     "daisy":   "hmac_github:env:DAISY_WEBHOOK_HMAC",
      "claude":  "bearer:env:GATEWAY_WEBHOOK_TOKEN"}``.
+  Two HMAC schemes exist because targets disagree on the wire format:
+  ``hmac`` is the Hermes/Stripe timestamped scheme (``X-Hermes-Signature`` +
+  ``X-Hermes-Timestamp``), while ``hmac_github`` signs the raw body only and
+  sends ``X-Hub-Signature-256`` — the format the Hermes gateway's own
+  ``hermes webhook`` routes verify. Sending the wrong one yields HTTP 401.
   Spec ``<mode>:env:<ENV_VAR_NAME>`` resolves the secret from the named env var
   at load time. Raw secrets must never be embedded in ``AGENT_GATEWAY_AUTH``
   literally.
@@ -38,7 +44,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from services.shared.config import Config
 from services.shared.db import close_pool, get_pool
-from services.shared.hmac_sign import sign_request
+from services.shared.hmac_sign import sign_request, sign_request_github
 
 from . import outbox
 
@@ -67,14 +73,16 @@ class GatewayAuth:
 
     Attributes:
         mode: Auth scheme. ``"bearer"`` adds ``Authorization: Bearer <value>``,
-            ``"hmac"`` signs the body with the value as the raw secret bytes,
-            ``"none"`` sends no auth header.
+            ``"hmac"`` signs the body with the value as the raw secret bytes
+            (Hermes/Stripe timestamped scheme), ``"hmac_github"`` signs the raw
+            body only and sends ``X-Hub-Signature-256``, ``"none"`` sends no
+            auth header.
         value: Raw token (bearer) or raw secret (hmac). Empty string for
             ``none``. Treat as sensitive — never log or include in errors.
             ``repr=False`` so the secret does not leak via stray repr/log.
     """
 
-    mode: Literal["bearer", "hmac", "none"]
+    mode: Literal["bearer", "hmac", "hmac_github", "none"]
     value: str = dataclasses.field(repr=False)
 
 
@@ -82,9 +90,10 @@ def _resolve_auth_spec(spec: str) -> GatewayAuth:
     """Resolve a single ``AGENT_GATEWAY_AUTH`` value.
 
     Supported forms:
-        ``bearer:env:VAR_NAME``  -> Bearer with value from env var
-        ``hmac:env:VAR_NAME``    -> HMAC with secret from env var
-        ``none``                 -> no auth
+        ``bearer:env:VAR_NAME``       -> Bearer with value from env var
+        ``hmac:env:VAR_NAME``         -> HMAC (Hermes/Stripe) from env var
+        ``hmac_github:env:VAR_NAME``  -> HMAC (X-Hub-Signature-256) from env var
+        ``none``                      -> no auth
 
     Unknown / empty / unresolvable specs degrade to ``GatewayAuth("none","")``.
     The literal raw token form is intentionally NOT supported here to keep raw
@@ -99,7 +108,7 @@ def _resolve_auth_spec(spec: str) -> GatewayAuth:
     if len(parts) != 3:
         return GatewayAuth("none", "")
     mode, source, name = parts[0].lower(), parts[1].lower(), parts[2]
-    if mode not in ("bearer", "hmac"):
+    if mode not in ("bearer", "hmac", "hmac_github"):
         return GatewayAuth("none", "")
     if source != "env":
         return GatewayAuth("none", "")
@@ -383,11 +392,11 @@ async def _deliver_one(
     headers: dict[str, str] = {"Content-Type": "application/json"}
     body_bytes = _serialize_gateway_body(body)
 
-    if auth.mode == "hmac":
+    if auth.mode in ("hmac", "hmac_github"):
         if not _hmac_outbound_enabled():
             return "retry", f"hmac_outbound_disabled for agent={to_agent}"
-        sig_headers = sign_request(auth.value.encode("utf-8"), body_bytes)
-        headers.update(sig_headers)
+        signer = sign_request if auth.mode == "hmac" else sign_request_github
+        headers.update(signer(auth.value.encode("utf-8"), body_bytes))
     elif auth.mode == "bearer":
         headers["Authorization"] = f"Bearer {auth.value}"
     # mode == "none": no auth header.
