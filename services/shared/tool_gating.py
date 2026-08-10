@@ -53,11 +53,12 @@ CORE_TOOLS_BY_SERVER: dict[str, frozenset[str]] = {
 }
 
 # Tools that must register in BOTH "core" and "all" modes. Used by swarm where
-# notify/ack are required for inter-agent operation in any deployment.
+# notify/ack are required for inter-agent operation in any deployment, and
+# list_my_pending is the pull-side fallback when an agent has no push gateway.
 ALWAYS_ON_TOOLS_BY_SERVER: dict[str, frozenset[str]] = {
     "memory_mcp": frozenset(),
     "recall_mcp": frozenset(),
-    "swarm_mcp": frozenset({"notify", "ack"}),
+    "swarm_mcp": frozenset({"notify", "ack", "list_my_pending"}),
     "task_mcp": frozenset(),
 }
 

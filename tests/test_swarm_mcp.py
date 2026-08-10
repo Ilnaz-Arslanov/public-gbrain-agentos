@@ -29,7 +29,7 @@ from services.swarm_mcp.worker import _format_virtual_prompt, _load_gateways
 # --- Tool-gating helpers -----------------------------------------------------
 
 # Swarm tools that must be registered regardless of GBRAIN_TOOLS value.
-_ALWAYS_ON_SWARM_TOOLS = {"notify", "ack"}
+_ALWAYS_ON_SWARM_TOOLS = {"notify", "ack", "list_my_pending"}
 
 # Swarm tools that are only registered in `all` mode.
 _ALL_ONLY_SWARM_TOOLS = {
@@ -38,7 +38,6 @@ _ALL_ONLY_SWARM_TOOLS = {
     "stats",
     "get_delivery",
     "list_recent_deliveries",
-    "list_my_pending",
 }
 
 _ALL_SWARM_TOOLS = _ALWAYS_ON_SWARM_TOOLS | _ALL_ONLY_SWARM_TOOLS
@@ -47,10 +46,10 @@ _ALL_SWARM_TOOLS = _ALWAYS_ON_SWARM_TOOLS | _ALL_ONLY_SWARM_TOOLS
 def _registered_tool_names(mcp_instance) -> set[str]:
     """Return the set of FastMCP tool names registered on an mcp instance.
 
-    Uses the smallest stable accessor available on FastMCP 2.x.
+    Uses the public FastMCP 2.x accessor -- the private ``_list_tools`` gained a
+    required ``context`` argument and is not a stable entry point.
     """
-    tools = asyncio.run(mcp_instance._list_tools())
-    return {t.name for t in tools}
+    return set(asyncio.run(mcp_instance.get_tools()))
 
 
 def _reload_swarm_server_with_tool_set(

@@ -123,16 +123,17 @@ def test_recall_all_tools_policy_includes_stats() -> None:
 
 
 def test_swarm_notify_ack_always_on() -> None:
-    """notify and ack must register in both 'core' and 'all'."""
-    assert should_register_tool("swarm_mcp", "notify", "core") is True
-    assert should_register_tool("swarm_mcp", "ack", "core") is True
-    assert should_register_tool("swarm_mcp", "notify", "all") is True
-    assert should_register_tool("swarm_mcp", "ack", "all") is True
+    """notify, ack and list_my_pending must register in both 'core' and 'all'."""
+    for name in ["notify", "ack", "list_my_pending"]:
+        assert should_register_tool("swarm_mcp", name, "core") is True
+        assert should_register_tool("swarm_mcp", name, "all") is True
 
     # And they must be declared in the policy module, not just by accident.
     always_on = ALWAYS_ON_TOOLS_BY_SERVER["swarm_mcp"]
     assert "notify" in always_on
     assert "ack" in always_on
+    # Pull-side fallback for agents without a push gateway.
+    assert "list_my_pending" in always_on
 
 
 def test_swarm_core_hides_non_operational_tools() -> None:
@@ -143,7 +144,6 @@ def test_swarm_core_hides_non_operational_tools() -> None:
         "stats",
         "get_delivery",
         "list_recent_deliveries",
-        "list_my_pending",
     ]
     for name in hidden:
         assert should_register_tool("swarm_mcp", name, "core") is False
@@ -156,11 +156,12 @@ def test_valid_tool_sets_constant() -> None:
 
 
 def test_core_tools_by_server_constant_shape() -> None:
-    """CORE_TOOLS_BY_SERVER must declare keys for all three servers."""
+    """CORE_TOOLS_BY_SERVER must declare keys for every gated server."""
     assert set(CORE_TOOLS_BY_SERVER.keys()) == {
         "memory_mcp",
         "recall_mcp",
         "swarm_mcp",
+        "task_mcp",
     }
 
 
