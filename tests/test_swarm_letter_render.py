@@ -95,3 +95,35 @@ def test_nested_structures_degrade_to_json() -> None:
     rendered = _render_payload_body({"ctx": {"run": 7}, "items": [{"a": 1}]})
     assert '"run": 7' in rendered or '"run":7' in rendered
     assert '"a": 1' in rendered or '"a":1' in rendered
+
+
+# ---------------------------------------------------------------------------
+# The letter must not ask the receiver to report to a coordinator.
+# That instruction produced 21 undeliverable letters to a non-existent
+# `coordinator-agent` (cleaned up 2026-08-10) — coordination goes through the
+# owner, so the second report had no reader.
+# ---------------------------------------------------------------------------
+
+
+def test_letter_does_not_ask_for_coordinator_copy() -> None:
+    prompt = _format_virtual_prompt("cody", "daisy", "t-1", {"title": "x", "body": "y"})
+    assert "swarm.notify" not in prompt
+    assert "coordinator" not in prompt.lower()
+
+
+def test_letter_actions_are_task_report_ack() -> None:
+    """Exactly three numbered steps remain, ack last."""
+    prompt = _format_virtual_prompt("cody", "daisy", "t-1", {"title": "x", "body": "y"})
+    assert "1. Execute the task." in prompt
+    assert "2. Send the owner a detailed chat report" in prompt
+    assert '3. Call swarm.ack(task_id="t-1")' in prompt
+    assert "4." not in prompt.split("ACTIONS:")[1]
+
+
+def test_coordinator_target_still_takes_ack_only_path() -> None:
+    """The loop gate itself is untouched — only the instruction was removed."""
+    from services.swarm_mcp import worker
+
+    prompt = _format_virtual_prompt("cody", worker.COORDINATOR_AGENT, "t-2", {"title": "x"})
+    assert "ack-only fast path" in prompt
+    assert "DO NOT swarm.notify back" in prompt

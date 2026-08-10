@@ -254,11 +254,17 @@ def _format_virtual_prompt(from_agent: str, to_agent: str, task_id: str, payload
     The receiving agent sees this as if it came from the owner via the
     chat gateway (synthetic update). Agent must call swarm.ack(task_id) when done.
 
+    The prompt asks for exactly two things: do the task, report to the owner in
+    chat. It deliberately does NOT ask for a copy to a coordinator — that
+    instruction used to be here and produced 21 undeliverable letters to a
+    non-existent ``coordinator-agent`` before it was removed (2026-08-10).
+    Coordination happens through the owner, so a second report had no reader.
+    Restore it only together with a coordinator that someone actually reads.
+
     Loop-prevention gates:
-    - Ack-only fast path for: (a) reports back to the coordinator (COORDINATOR_AGENT),
-      detected by title prefix "Report from " or `_origin_task` field; (b) explicit
-      smoke pings via `_smoke=true`. These skip the full report + dual-notify flow
-      which would otherwise cause infinite recursion (coordinator → coordinator).
+    - Ack-only fast path for: (a) anything addressed to COORDINATOR_AGENT;
+      (b) explicit smoke pings via `_smoke=true`. These skip the full report
+      flow which would otherwise recurse (coordinator → coordinator).
     """
     title = payload.get("title") or payload.get("kind") or "(no title)"
     body = _render_payload_body(payload)
@@ -321,14 +327,7 @@ def _format_virtual_prompt(from_agent: str, to_agent: str, task_id: str, payload
         f"\n"
         f"   Avoid one-liner 'done, acked' reports. The owner wants substance, "
         f"at least 5-10 lines.\n"
-        f"3. ALSO SEND A SHORT SUMMARY TO THE COORDINATOR via swarm.notify:\n"
-        f"   swarm.notify(to_agent=\"{COORDINATOR_AGENT}\", payload={{"
-        f"\"title\": \"Report from {to_agent}: <task name>\", "
-        f"\"body\": \"<2-4 bullets: what done + commit/path + gaps>\", "
-        f"\"_origin_task\": \"{task_id}\"}})\n"
-        f"   Without this step the coordinator cannot see your work or schedule "
-        f"follow-ups. Chat report = owner, swarm.notify = coordinator. Two recipients.\n"
-        f"4. Call swarm.ack(task_id=\"{task_id}\") at the very end."
+        f"3. Call swarm.ack(task_id=\"{task_id}\") at the very end."
     )
 
 
