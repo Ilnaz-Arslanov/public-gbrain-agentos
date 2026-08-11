@@ -305,7 +305,7 @@ def test_worker_selects_bearer_when_no_hmac_config(monkeypatch: pytest.MonkeyPat
     row = _make_row("claude")
 
     status, err = asyncio.run(worker._deliver_one(client, gateways, row, auth_map))  # type: ignore[arg-type]
-    assert status == "acked", err
+    assert status == "delivered", err
     assert len(client.calls) == 1
     headers = client.calls[0]["headers"]
     assert headers["Authorization"] == "Bearer legacy-bearer"
@@ -326,7 +326,7 @@ def test_worker_signs_with_hmac_when_configured(monkeypatch: pytest.MonkeyPatch)
     row = _make_row("tyrande")
 
     status, _err = asyncio.run(worker._deliver_one(client, gateways, row, auth_map))
-    assert status == "acked"
+    assert status == "delivered"
     headers = client.calls[0]["headers"]
     assert SIGNATURE_HEADER in headers
     assert TIMESTAMP_HEADER in headers
@@ -360,7 +360,7 @@ def test_worker_body_unchanged_between_sign_and_post(monkeypatch: pytest.MonkeyP
     row = _make_row("tyrande", task_id="t-integ", from_agent="nova")
 
     status, _ = asyncio.run(worker._deliver_one(client, gateways, row, auth_map))
-    assert status == "acked"
+    assert status == "delivered"
 
     posted_bytes = client.calls[0]["content"]
     sig_header = client.calls[0]["headers"][SIGNATURE_HEADER]
@@ -399,8 +399,8 @@ def test_worker_mixed_bearer_and_hmac_in_batch(monkeypatch: pytest.MonkeyPatch) 
     async def _go() -> None:
         s1, _ = await worker._deliver_one(client, gateways, _make_row("tyrande", task_id="t-1"), auth_map)
         s2, _ = await worker._deliver_one(client, gateways, _make_row("claude", task_id="t-2"), auth_map)
-        assert s1 == "acked"
-        assert s2 == "acked"
+        assert s1 == "delivered"
+        assert s2 == "delivered"
 
     asyncio.run(_go())
     assert len(client.calls) == 2
@@ -493,7 +493,7 @@ def test_worker_signs_with_github_scheme_when_configured(monkeypatch: pytest.Mon
     auth_map = worker._load_gateway_auth()
 
     status, _err = asyncio.run(worker._deliver_one(client, gateways, _make_row("daisy"), auth_map))
-    assert status == "acked"
+    assert status == "delivered"
     headers = client.calls[0]["headers"]
     assert GITHUB_SIGNATURE_HEADER in headers
     # The timestamped Hermes headers must NOT leak into a GitHub-scheme request
@@ -543,7 +543,7 @@ def test_worker_mixed_hermes_and_github_schemes_in_batch(monkeypatch: pytest.Mon
         return s1, s2
 
     s1, s2 = asyncio.run(_both())
-    assert (s1, s2) == ("acked", "acked")
+    assert (s1, s2) == ("delivered", "delivered")
 
     hermes_headers, github_headers = client.calls[0]["headers"], client.calls[1]["headers"]
     assert SIGNATURE_HEADER in hermes_headers and GITHUB_SIGNATURE_HEADER not in hermes_headers

@@ -1,8 +1,19 @@
 """delivery_outbox state machine + DB operations.
 
 States: pending → sent → ack_missing → acked | failed
-MVP simplification: pending → (HTTP 200) acked | (HTTP fail) pending+retry | (max attempts) failed.
-sent/ack_missing reserved for Stage 2 ACK protocol.
+
+Stage 2 ACK protocol (live since 2026-08-11). Two different events, two
+different states — conflating them is what this protocol exists to prevent:
+
+- ``sent``   — the gateway answered 2xx. The letter reached the agent's
+  harness. It says nothing about whether the agent did the work.
+- ``acked``  — the agent itself called ``swarm.ack(task_id)``. This is the
+  only evidence that the work was actually picked up.
+
+Before Stage 2 the worker wrote ``acked`` on a 2xx, so a letter delivered to a
+frozen or silent agent was indistinguishable from one that was handled. An
+agent that never acks now leaves the row in ``sent`` → ``ack_missing`` instead
+of a false ``acked``.
 """
 import logging
 import secrets
@@ -14,6 +25,11 @@ logger = logging.getLogger(__name__)
 
 BACKOFF_BASE_SEC = 10
 BACKOFF_CAP_SEC = 300
+
+# How long a delivered letter may sit unacked before it is flagged. Sized for a
+# real agent turn: the receiver has to read the letter, do the task and report
+# to the owner before calling swarm.ack, which routinely takes minutes.
+ACK_TIMEOUT_SEC = 1800
 
 
 def compute_backoff_seconds(attempts: int) -> int:
@@ -85,6 +101,50 @@ async def fetch_due(
         """,
         limit,
     )
+
+
+async def mark_sent(conn: asyncpg.Connection, task_id: str) -> bool:
+    """Mark row as delivered to the gateway (2xx), awaiting the agent's ack.
+
+    This is the transport half of the protocol. The row stays non-terminal on
+    purpose: only :func:`mark_acked`, driven by the receiving agent's own
+    ``swarm.ack`` call, closes it.
+    """
+    result = await conn.execute(
+        """
+        UPDATE delivery_outbox
+        SET status = 'sent', updated_at = now()
+        WHERE task_id = $1 AND status = 'pending'
+        """,
+        task_id,
+    )
+    rowcount = int(result.split()[-1]) if result.startswith("UPDATE ") else 0
+    if rowcount > 0:
+        logger.info("outbox.mark_sent task_id=%s", task_id)
+    return rowcount > 0
+
+
+async def sweep_ack_missing(pool: asyncpg.Pool, timeout_sec: int = ACK_TIMEOUT_SEC) -> int:
+    """Flag deliveries that were sent but never acked by the receiving agent.
+
+    Deliberately does NOT re-deliver and does NOT return the row to 'pending':
+    the letter did arrive, so a re-send would re-run a task the agent may have
+    already performed but failed to ack. ``ack_missing`` is an observability
+    signal — replaying one is an operator decision, not an automatic one.
+    """
+    result = await pool.execute(
+        """
+        UPDATE delivery_outbox
+        SET status = 'ack_missing', updated_at = now()
+        WHERE status = 'sent'
+          AND updated_at < now() - ($1 || ' seconds')::interval
+        """,
+        str(timeout_sec),
+    )
+    n = int(result.split()[-1]) if result.startswith("UPDATE ") else 0
+    if n > 0:
+        logger.warning("outbox.ack_missing flagged %d delivered-but-unacked rows", n)
+    return n
 
 
 async def mark_acked(conn: asyncpg.Connection, task_id: str) -> bool:
@@ -175,24 +235,12 @@ async def mark_deferred(
     return "pending"
 
 
-async def bootstrap_recovery(pool: asyncpg.Pool) -> int:
-    """Reset rows stuck in 'sent' or 'ack_missing' back to 'pending' on startup.
-
-    Why: if worker died mid-flight, those rows would never be retried.
-    """
-    result = await pool.execute(
-        """
-        UPDATE delivery_outbox
-        SET status = 'pending',
-            next_retry_at = now(),
-            updated_at = now()
-        WHERE status IN ('sent', 'ack_missing')
-        """
-    )
-    n = int(result.split()[-1]) if result.startswith("UPDATE ") else 0
-    if n > 0:
-        logger.warning("outbox.bootstrap reset %d non-terminal rows to pending", n)
-    return n
+# ``bootstrap_recovery`` (reset 'sent'/'ack_missing' → 'pending' on startup) was
+# removed with Stage 2. It was a no-op before — nothing ever reached those
+# states — and would have become actively harmful once 'sent' started meaning
+# "the agent already received this": every worker restart would have re-sent
+# every unacked letter. A worker that dies mid-delivery still leaves its row
+# 'pending' inside the open transaction, so the normal retry path covers it.
 
 
 async def get_stats(pool: asyncpg.Pool) -> dict[str, int]:
@@ -258,6 +306,10 @@ async def list_pending_for(pool: asyncpg.Pool, to_agent: str, limit: int = 20) -
 
     Agent calls this on session start to fetch its inbox.
     Status remains 'pending' until agent acks via mark_acked.
+
+    Scoped to 'pending' only. 'ack_missing' rows are excluded on purpose: they
+    were already delivered once, so serving them here would re-run tasks on
+    every session start for the many agents that do the work but forget to ack.
     """
     import json as _json
     rows = await pool.fetch(

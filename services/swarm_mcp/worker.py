@@ -369,6 +369,10 @@ async def _deliver_one(
 ) -> tuple[str, str]:
     """Try to deliver one row. Returns (status, last_error).
 
+    ``status`` is a *transport* verdict — "delivered" means the gateway
+    answered 2xx, not that the receiving agent did anything with the letter.
+    The row is closed only when that agent calls ``swarm.ack``.
+
     Selects per-agent auth via ``auth_map`` (resolved from ``AGENT_GATEWAY_AUTH``)
     with a legacy ``GATEWAY_WEBHOOK_TOKEN`` Bearer fallback. The request body
     bytes are serialized exactly once and shared between signature computation
@@ -408,7 +412,7 @@ async def _deliver_one(
         return "retry", f"http_error: {type(exc).__name__}: {exc}"
 
     if 200 <= resp.status_code < 300:
-        return "acked", ""
+        return "delivered", ""
     if resp.status_code == 429:
         return "retry", f"http_429"
     if 400 <= resp.status_code < 500:
@@ -419,20 +423,27 @@ async def _deliver_one(
 async def run() -> None:
     config = Config(mcp_port=0)
     pool = await get_pool(config)
-    n_recovered = await outbox.bootstrap_recovery(pool)
     gateways = _load_gateways()
     auth_map = _load_gateway_auth()
     logger.info(
-        "swarm-worker started: gateways=%s auth_modes=%s recovered=%d poll=%ds",
+        "swarm-worker started: gateways=%s auth_modes=%s ack_timeout=%ds poll=%ds",
         list(gateways.keys()),
         {a: v.mode for a, v in auth_map.items()},
-        n_recovered,
+        outbox.ACK_TIMEOUT_SEC,
         POLL_INTERVAL_SEC,
     )
+
+    # Sweep for unacked deliveries roughly once a minute — the check scans a
+    # non-indexed status/updated_at predicate, and nothing here is urgent.
+    sweep_every = max(1, 60 // POLL_INTERVAL_SEC)
+    tick = 0
 
     async with httpx.AsyncClient() as client:
         while not _shutdown.requested:
             try:
+                tick += 1
+                if tick % sweep_every == 0:
+                    await outbox.sweep_ack_missing(pool)
                 async with pool.acquire() as conn:
                     async with conn.transaction():
                         rows = await conn.fetch(
@@ -451,8 +462,8 @@ async def run() -> None:
                             logger.info("processing batch=%d", len(rows))
                         for row in rows:
                             status, last_error = await _deliver_one(client, gateways, row, auth_map)
-                            if status == "acked":
-                                await outbox.mark_acked(conn, row["task_id"])
+                            if status == "delivered":
+                                await outbox.mark_sent(conn, row["task_id"])
                             elif status == "failed":
                                 await conn.execute(
                                     """

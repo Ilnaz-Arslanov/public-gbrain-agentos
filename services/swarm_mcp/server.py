@@ -55,10 +55,7 @@ class AuthCaptureMiddleware(HermesAwareAuthMiddleware):
 async def lifespan(server: FastMCP) -> AsyncIterator[dict[str, object]]:
     config = Config(mcp_port=int(os.environ.get("MCP_PORT", str(DEFAULT_PORT))))
     pool = await get_pool(config)
-    n_recovered = await outbox.bootstrap_recovery(pool)
-    logger.info(
-        "swarm-mcp started: port=%d recovered=%d", config.mcp_port, n_recovered
-    )
+    logger.info("swarm-mcp started: port=%d", config.mcp_port)
     try:
         yield {"pool": pool, "config": config}
     finally:
@@ -137,13 +134,21 @@ async def notify(
 
 @_gated_tool("ack")
 async def ack(task_id: str, ctx: Any = None) -> dict[str, Any]:
-    """Acknowledge a delivery — moves status to acked. Idempotent."""
+    """Acknowledge a delivery — moves status to acked. Idempotent.
+
+    ``acked=False`` means this call changed nothing; ``status`` says why —
+    already 'acked' (a repeat call) or 'failed' (never delivered).
+    """
     pool = await _get_pool()
     caller = await _resolve_caller(ctx, pool)
     async with pool.acquire() as conn:
         ok = await outbox.mark_acked(conn, task_id)
+    result: dict[str, Any] = {"task_id": task_id, "acked": ok}
+    if not ok:
+        row = await outbox.get_row(pool, task_id)
+        result["status"] = row["status"] if row else "not_found"
     await log_audit(pool, caller, "ack", {"task_id": task_id, "ok": ok}, "ok", 0)
-    return {"task_id": task_id, "acked": ok}
+    return result
 
 
 @_gated_tool("broadcast")
