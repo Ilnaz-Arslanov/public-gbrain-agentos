@@ -124,6 +124,10 @@ async def notify(
     """Enqueue a delivery to a single agent.
 
     Returns: {task_id, status}. Idempotent on task_id (re-enqueue is no-op).
+
+    ``payload`` carries the letter (``title``/``body`` lead the rendering).
+    Set ``payload["_kind"] = "report"`` for findings sent for the record: the
+    receiver is asked to read and ack instead of executing a task.
     """
     pool = await _get_pool()
     from_agent = await _resolve_caller(ctx, pool)

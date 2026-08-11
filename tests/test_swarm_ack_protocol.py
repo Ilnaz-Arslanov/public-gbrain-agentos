@@ -179,6 +179,31 @@ def test_ack_reports_status_when_it_changed_nothing(
 # --- Letter envelope ---------------------------------------------------------
 
 
+def test_report_letter_asks_to_read_not_to_execute() -> None:
+    """``_kind="report"`` drops the execute-and-report imperative, keeps the ack."""
+    prompt = _format_virtual_prompt(
+        "daisy", "cody", "t-2", {"title": "Audit results", "body": "B", "_kind": "report"}
+    )
+    assert "(report)" in prompt
+    assert "Report: Audit results" in prompt
+    assert "Execute the task." not in prompt
+    assert "What I did:" not in prompt
+    assert 'swarm.ack(task_id="t-2")' in prompt
+
+
+def test_report_kind_does_not_collide_with_letter_title() -> None:
+    """``kind`` still titles a normal letter; only ``_kind`` switches the envelope.
+
+    Senders in the wild use ``kind`` as a subject line (daisy, 2026-08-09), so
+    reading the envelope switch off it would silently mute real tasks.
+    """
+    prompt = _format_virtual_prompt(
+        "daisy", "cody", "t-3", {"kind": "report", "facts": ["f1"]}
+    )
+    assert "Task: report" in prompt
+    assert "Execute the task." in prompt
+
+
 def test_task_letter_still_demands_execution_and_ack() -> None:
     """The default envelope keeps its imperative block.
 

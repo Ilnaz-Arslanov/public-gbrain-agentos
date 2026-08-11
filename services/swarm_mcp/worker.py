@@ -265,6 +265,15 @@ def _format_virtual_prompt(from_agent: str, to_agent: str, task_id: str, payload
     - Ack-only fast path for: (a) anything addressed to COORDINATOR_AGENT;
       (b) explicit smoke pings via `_smoke=true`. These skip the full report
       flow which would otherwise recurse (coordinator → coordinator).
+
+    Envelope kinds:
+    - default — a task: execute, report to the owner, ack.
+    - ``_kind="report"`` — findings sent for the record, with no work attached.
+      The imperative block is what makes an agent act, so handing it to an
+      informational letter makes the receiver stage a performance of "executing"
+      an already-finished piece of work (observed on the 2026-08-11 bridge
+      audit). Senders set this flag; ``kind`` is left alone because it already
+      titles the letter.
     """
     title = payload.get("title") or payload.get("kind") or "(no title)"
     body = _render_payload_body(payload)
@@ -301,6 +310,20 @@ def _format_virtual_prompt(from_agent: str, to_agent: str, task_id: str, payload
             f"Otherwise skip.\n"
             f"3. DO NOT swarm.notify back (loop risk). Go straight to swarm.ack.\n"
             f"4. swarm.ack(task_id=\"{task_id}\")."
+        )
+
+    # Informational letter: no task, so no imperative to execute one.
+    if str(payload.get("_kind") or "").lower() == "report":
+        return (
+            f"[Inter-agent from {from_agent} -> {to_agent}] urgency={urgency} (report)\n"
+            f"Report: {title}\n"
+            f"{body}{extra}\n"
+            f"---\n"
+            f"ACTIONS (report — nothing to execute):\n"
+            f"1. Read it. No task is attached; do not invent one.\n"
+            f"2. If it changes your plans or contradicts what you know, send the "
+            f"owner 1-3 lines. Otherwise skip the report.\n"
+            f"3. swarm.ack(task_id=\"{task_id}\")."
         )
 
     return (
