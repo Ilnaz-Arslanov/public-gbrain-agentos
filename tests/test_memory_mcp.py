@@ -17,6 +17,7 @@ from services.memory_mcp.tools import (
     _assert_slot_size,
     _build_frontmatter,
     _extract_frontmatter_block,
+    _handoff_rel_path,
     _parse_frontmatter,
     _sha256,
     _slot_payload,
@@ -126,6 +127,38 @@ class TestSlugify:
 
     def test_idempotent(self) -> None:
         assert _slugify("Одна и та же заметка") == _slugify("Одна и та же заметка")
+
+
+# -----------------------------------------------------------------------
+# Handoff path
+# -----------------------------------------------------------------------
+class TestHandoffRelPath:
+    """Tests for _handoff_rel_path helper."""
+
+    def test_format(self) -> None:
+        path = _handoff_rel_path("90-inbox", "cody", "daisy")
+        assert re.fullmatch(
+            r"90-inbox/cody-to-daisy-\d{4}-\d{2}-\d{2}-\d{6}\.md", path
+        )
+
+    def test_two_handoffs_same_day_distinct_paths(self) -> None:
+        # Root of the overwrite bug: a date-only path made the second
+        # handoff of the day silently replace the first.
+        with patch("services.memory_mcp.tools.datetime") as dt:
+            dt.now.side_effect = [
+                datetime(2026, 8, 12, 7, 5, 1, tzinfo=timezone.utc),
+                datetime(2026, 8, 12, 10, 49, 30, tzinfo=timezone.utc),
+            ]
+            first = _handoff_rel_path("90-inbox", "cody", "daisy")
+            second = _handoff_rel_path("90-inbox", "cody", "daisy")
+        assert first == "90-inbox/cody-to-daisy-2026-08-12-070501.md"
+        assert second == "90-inbox/cody-to-daisy-2026-08-12-104930.md"
+        assert first != second
+
+    def test_distinct_pairs_distinct_paths(self) -> None:
+        a = _handoff_rel_path("90-inbox", "cody", "daisy")
+        b = _handoff_rel_path("90-inbox", "daisy", "cody")
+        assert a != b
 
 
 # -----------------------------------------------------------------------

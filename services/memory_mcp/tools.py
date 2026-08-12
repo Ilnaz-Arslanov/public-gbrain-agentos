@@ -215,6 +215,19 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _handoff_rel_path(scope: str, from_agent: str, to_agent: str) -> str:
+    """Build a handoff path that is unique per second, not per day.
+
+    The date alone is not enough: a second handoff between the same pair
+    on the same day resolves to the same path and silently overwrites the
+    first one via ON CONFLICT (path) — the sender still gets "created".
+    """
+    return (
+        f"{scope}/{from_agent}-to-{to_agent}"
+        f"-{datetime.now(timezone.utc).strftime('%Y-%m-%d-%H%M%S')}.md"
+    )
+
+
 def _sha256(content: str) -> str:
     """Compute SHA-256 hex digest of content."""
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
@@ -1135,7 +1148,7 @@ def register_tools(
                 f"Agent '{agent_ctx.agent}' cannot write to {scope}"
             )
 
-        rel_path = f"{scope}/{from_agent}-to-{to_agent}-{_today_iso()}.md"
+        rel_path = _handoff_rel_path(scope, from_agent, to_agent)
         abs_path = validate_path(rel_path, vault_root)
 
         fm = {
