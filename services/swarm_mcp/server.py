@@ -24,6 +24,7 @@ from services.shared.audit import log_audit
 from services.shared.tool_gating import parse_tool_set, should_register_tool
 
 from . import outbox
+from .worker import measure_payload_body, render_body_limit
 
 logging.basicConfig(
     level=logging.INFO,
@@ -123,17 +124,35 @@ async def notify(
 ) -> dict[str, Any]:
     """Enqueue a delivery to a single agent.
 
-    Returns: {task_id, status}. Idempotent on task_id (re-enqueue is no-op).
+    Returns: {task_id, status, body_chars, body_limit, truncated}. Idempotent
+    on task_id (re-enqueue is no-op).
 
     ``payload`` carries the letter (``title``/``body`` lead the rendering).
     Set ``payload["_kind"] = "report"`` for findings sent for the record: the
     receiver is asked to read and ack instead of executing a task.
+
+    ``truncated=True`` means the rendered body exceeds ``body_limit`` and the
+    tail will NOT reach the receiver — split the letter or leave the material
+    where the receiver can fetch it. The cut is announced in the delivered
+    text, but only the receiver sees that marker, so it is reported here too.
     """
     pool = await _get_pool()
     from_agent = await _resolve_caller(ctx, pool)
     tid = await outbox.enqueue(pool, from_agent, to_agent, payload, task_id, max_attempts)
-    await log_audit(pool, from_agent, "notify", {"to": to_agent, "task_id": tid}, "ok", 0)
-    return {"task_id": tid, "status": "pending"}
+    _, body_chars = measure_payload_body(payload)
+    limit = render_body_limit()
+    truncated = body_chars > limit
+    audit_detail: dict[str, Any] = {"to": to_agent, "task_id": tid}
+    if truncated:
+        audit_detail["truncated_chars"] = body_chars - limit
+    await log_audit(pool, from_agent, "notify", audit_detail, "ok", 0)
+    return {
+        "task_id": tid,
+        "status": "pending",
+        "body_chars": body_chars,
+        "body_limit": limit,
+        "truncated": truncated,
+    }
 
 
 @_gated_tool("ack")
@@ -162,15 +181,27 @@ async def broadcast(
     max_attempts: int = 5,
     ctx: Any = None,
 ) -> dict[str, Any]:
-    """Enqueue payload to multiple agents. Returns {task_ids: {agent: task_id}}."""
+    """Enqueue payload to multiple agents.
+
+    Returns {task_ids: {agent: task_id}, body_chars, body_limit, truncated}.
+    The size fields describe the shared payload and carry the same meaning as
+    in :func:`notify` — one oversized body is cut for every recipient at once.
+    """
     pool = await _get_pool()
     from_agent = await _resolve_caller(ctx, pool)
     task_ids: dict[str, str] = {}
     for to in agents:
         tid = await outbox.enqueue(pool, from_agent, to, payload, None, max_attempts)
         task_ids[to] = tid
+    _, body_chars = measure_payload_body(payload)
+    limit = render_body_limit()
     await log_audit(pool, from_agent, "broadcast", {"agents": agents, "n": len(agents)}, "ok", 0)
-    return {"task_ids": task_ids}
+    return {
+        "task_ids": task_ids,
+        "body_chars": body_chars,
+        "body_limit": limit,
+        "truncated": body_chars > limit,
+    }
 
 
 @_gated_tool("escalate")

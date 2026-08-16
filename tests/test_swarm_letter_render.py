@@ -9,9 +9,12 @@ import os
 os.environ.setdefault("MCP_PORT", "0")
 
 from services.swarm_mcp.worker import (  # noqa: E402
-    _RENDER_BODY_LIMIT,
+    _RENDER_BODY_LIMIT_DEFAULT,
+    _RENDER_BODY_LIMIT_ENV,
     _format_virtual_prompt,
     _render_payload_body,
+    measure_payload_body,
+    render_body_limit,
 )
 
 # Real payload shape observed from a Hermes-side sender (daisy, 2026-08-09):
@@ -86,8 +89,44 @@ def test_empty_payload_renders_empty() -> None:
 def test_oversized_body_is_truncated_visibly() -> None:
     """Oversized content is capped and the cut is announced, never silent."""
     rendered = _render_payload_body({"facts": ["x" * 10_000]})
-    assert len(rendered) <= _RENDER_BODY_LIMIT + 40
+    assert len(rendered) <= _RENDER_BODY_LIMIT_DEFAULT + 40
     assert rendered.endswith("[truncated by swarm-worker]")
+
+
+def test_measure_reports_size_before_truncation() -> None:
+    """The sender learns the untruncated size, not the size it was cut to.
+
+    Without this the author of an oversized letter has no signal at all: the
+    ``[truncated]`` marker lands in the receiver's copy only.
+    """
+    rendered, full_length = measure_payload_body({"body": "y" * 10_000})
+    assert full_length == 10_000
+    assert len(rendered) < full_length
+    assert rendered.endswith("[truncated by swarm-worker]")
+
+
+def test_measure_reports_exact_size_when_it_fits() -> None:
+    """A letter under the cap is reported at its real length and left intact."""
+    rendered, full_length = measure_payload_body({"body": "short letter"})
+    assert rendered == "short letter"
+    assert full_length == len("short letter")
+
+
+def test_limit_is_overridable_by_env(monkeypatch) -> None:
+    """Operators can raise or lower the cap without editing the code."""
+    monkeypatch.setenv(_RENDER_BODY_LIMIT_ENV, "50")
+    assert render_body_limit() == 50
+    rendered, full_length = measure_payload_body({"body": "z" * 200})
+    assert full_length == 200
+    assert rendered.startswith("z" * 50)
+    assert rendered.endswith("[truncated by swarm-worker]")
+
+
+def test_bad_limit_falls_back_to_default(monkeypatch) -> None:
+    """A typo in the env var must not cut every letter to nothing."""
+    for bad in ("", "   ", "abc", "0", "-100"):
+        monkeypatch.setenv(_RENDER_BODY_LIMIT_ENV, bad)
+        assert render_body_limit() == _RENDER_BODY_LIMIT_DEFAULT
 
 
 def test_nested_structures_degrade_to_json() -> None:

@@ -184,7 +184,42 @@ _RENDER_RESERVED_KEYS = frozenset(
 )
 # Hard cap on the rendered body so one oversized payload cannot blow up the
 # gateway request. Truncation is visible, never silent.
-_RENDER_BODY_LIMIT = 4000
+_RENDER_BODY_LIMIT_DEFAULT = 4000
+_RENDER_BODY_LIMIT_ENV = "SWARM_RENDER_BODY_LIMIT"
+
+
+def render_body_limit() -> int:
+    """Rendered-body cap, overridable per deployment via ``SWARM_RENDER_BODY_LIMIT``.
+
+    Read on every call rather than frozen at import: the worker and the MCP
+    server are separate processes, and a value captured at import time would
+    let the two disagree about the limit after an operator changes it.
+
+    A malformed or non-positive value falls back to the default with a warning.
+    A typo in a unit file must not silently cut every letter to nothing.
+    """
+    raw = os.environ.get(_RENDER_BODY_LIMIT_ENV)
+    if raw is None or not raw.strip():
+        return _RENDER_BODY_LIMIT_DEFAULT
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning(
+            "%s=%r is not an integer — using default %d",
+            _RENDER_BODY_LIMIT_ENV,
+            raw,
+            _RENDER_BODY_LIMIT_DEFAULT,
+        )
+        return _RENDER_BODY_LIMIT_DEFAULT
+    if value <= 0:
+        logger.warning(
+            "%s=%d is not positive — using default %d",
+            _RENDER_BODY_LIMIT_ENV,
+            value,
+            _RENDER_BODY_LIMIT_DEFAULT,
+        )
+        return _RENDER_BODY_LIMIT_DEFAULT
+    return value
 
 
 def _render_section(key: str, value: object) -> str:
@@ -211,6 +246,30 @@ def _render_section(key: str, value: object) -> str:
         return f"{label}: {value!r}"
 
 
+def measure_payload_body(payload: dict) -> tuple[str, int]:
+    """Render the letter body and report how long it was before truncation.
+
+    Same rendering as :func:`_render_payload_body`, but the caller also learns
+    the pre-truncation size. The sender-side ``notify`` tool uses this to warn
+    an author that part of the letter will never reach the receiver: the
+    ``[truncated by swarm-worker]`` marker is visible only to the recipient, so
+    without this the author has no way to know anything was cut.
+
+    Args:
+        payload: Raw inter-agent payload as stored in ``delivery_outbox``.
+
+    Returns:
+        ``(rendered_body, full_length)`` — the body as it will be delivered,
+        and the character count of the untruncated render.
+    """
+    rendered = _render_payload_body_full(payload)
+    full_length = len(rendered)
+    limit = render_body_limit()
+    if full_length > limit:
+        rendered = rendered[:limit] + "\n... [truncated by swarm-worker]"
+    return rendered, full_length
+
+
 def _render_payload_body(payload: dict) -> str:
     """Build the human-readable body of an inter-agent letter.
 
@@ -227,8 +286,13 @@ def _render_payload_body(payload: dict) -> str:
 
     Returns:
         Rendered body text (possibly empty if the payload carried no content),
-        truncated to ``_RENDER_BODY_LIMIT`` with an explicit marker.
+        truncated to :func:`render_body_limit` with an explicit marker.
     """
+    return measure_payload_body(payload)[0]
+
+
+def _render_payload_body_full(payload: dict) -> str:
+    """Render the letter body without applying the length cap."""
     parts: list[str] = []
     for lead in ("body", "message"):
         value = payload.get(lead)
@@ -242,10 +306,7 @@ def _render_payload_body(payload: dict) -> str:
             continue
         parts.append(_render_section(key, value))
 
-    rendered = "\n\n".join(parts)
-    if len(rendered) > _RENDER_BODY_LIMIT:
-        rendered = rendered[:_RENDER_BODY_LIMIT] + "\n... [truncated by swarm-worker]"
-    return rendered
+    return "\n\n".join(parts)
 
 
 def _format_virtual_prompt(from_agent: str, to_agent: str, task_id: str, payload: dict) -> str:
