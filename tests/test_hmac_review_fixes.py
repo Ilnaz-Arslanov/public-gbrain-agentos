@@ -933,3 +933,120 @@ async def test_append_daily_log_honest_caller_has_no_declared_author(
     assert "[tyrande]" in md
     assert "declared" not in md
     assert "declared_author" not in audit_calls[-1]["args"]
+
+
+def test_c1_create_handoff_uses_authenticated_agent() -> None:
+    """Static guard: ``create_handoff`` must stamp documents.agent and the
+    frontmatter identity from the authenticated caller, not ``from_agent``.
+    The address parts still shape the path -- that is data, not identity.
+    """
+    src = (
+        Path(__file__).resolve().parent.parent
+        / "services" / "memory_mcp" / "tools.py"
+    ).read_text(encoding="utf-8")
+    start = src.index("async def create_handoff")
+    end = src.index("async def append_daily_log", start)
+    fn_src = src[start:end]
+
+    assert "resolved_agent = agent_ctx.agent" in fn_src, (
+        "create_handoff must resolve identity from the authenticated caller"
+    )
+    assert '"handoff", from_agent,' not in fn_src, (
+        "documents.agent must come from resolved_agent, not from_agent"
+    )
+    assert '"agent": from_agent,' not in fn_src, (
+        "frontmatter agent must come from resolved_agent, not from_agent"
+    )
+    # The address must still be built from the declared parties.
+    assert "_handoff_rel_path(scope, from_agent, to_agent)" in fn_src
+
+
+@pytest.mark.asyncio
+async def test_create_handoff_real_handler_rejects_spoofed_from_agent(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """HMAC-authenticated tyrande sends a handoff claiming from_agent="nova":
+    the stored identity stays tyrande, nova survives as declared_author and
+    in the address only.
+    """
+    from services.memory_mcp import tools as tmod
+
+    secret = "handoff-tyrande-secret"
+    monkeypatch.setenv("GBRAIN_HMAC_SECRETS_JSON", f'{{"tyrande": "{secret}"}}')
+
+    body_bytes = b'{"jsonrpc":"2.0","method":"tools/call"}'
+    ts = int(time.time())
+    av = HmacAuthValue(
+        signature=_sign(secret, body_bytes, ts),
+        timestamp=str(ts),
+        body=body_bytes,
+    )
+
+    audit_calls: list[dict[str, Any]] = []
+
+    async def _spy_log_audit(
+        _pool, agent, tool, args_summary, status, latency_ms, error=None
+    ):
+        audit_calls.append({"agent": agent, "tool": tool})
+
+    monkeypatch.setattr(tmod, "log_audit", _spy_log_audit)
+
+    async def _noop_queue(_pool, _doc_id):
+        return None
+
+    monkeypatch.setattr(tmod, "_queue_embedding", _noop_queue)
+
+    class _HandoffPool:
+        def __init__(self):
+            self.insert_args: tuple[Any, ...] = ()
+
+        async def fetch(self, query, *args):
+            if "hmac_secret_sha256" in query:
+                return [_hmac_row("tyrande", secret, write_scopes=["90-inbox"])]
+            return []
+
+        async def fetchrow(self, query, *args):
+            return None
+
+        async def fetchval(self, query, *args):
+            self.insert_args = args
+            return 11
+
+        async def execute(self, query, *args):
+            return "OK"
+
+    pool = _HandoffPool()
+    captured: dict[str, Any] = {}
+
+    class _CaptureMCP:
+        def tool(self, *_a, **kw):
+            def deco(fn):
+                captured[fn.__name__] = fn
+                return fn
+
+            return deco
+
+    async def _get_pool():
+        return pool
+
+    tmod.register_tools(_CaptureMCP(), str(tmp_path), _get_pool, tool_set="all")
+
+    tok = tmod._REQUEST_AUTH.set(av)
+    try:
+        result = await captured["create_handoff"](
+            from_agent="nova",
+            to_agent="cody",
+            title="Handoff",
+            body="body",
+        )
+    finally:
+        tmod._REQUEST_AUTH.reset(tok)
+
+    assert result.startswith("created:")
+    md = (tmp_path / result.split(":", 1)[1].strip()).read_text(encoding="utf-8")
+    assert "agent: tyrande" in md
+    assert "declared_author: nova" in md
+    # documents.agent (6th INSERT parameter) is the authenticated agent.
+    assert pool.insert_args[5] == "tyrande"
+    assert audit_calls[-1]["agent"] == "tyrande"

@@ -1148,6 +1148,14 @@ def register_tools(
                 f"Agent '{agent_ctx.agent}' cannot write to {scope}"
             )
 
+        # C1 fix (security): documents.agent + frontmatter identity come from
+        # the authenticated caller. ``from_agent`` stays part of the handoff
+        # address (it shapes the path) but must not pass as identity.
+        resolved_agent = agent_ctx.agent
+        declared_author = (
+            from_agent if (from_agent and from_agent != agent_ctx.agent) else None
+        )
+
         rel_path = _handoff_rel_path(scope, from_agent, to_agent)
         abs_path = validate_path(rel_path, vault_root)
 
@@ -1155,15 +1163,17 @@ def register_tools(
             "type": "handoff",
             "created": _now_iso(),
             "updated": _now_iso(),
-            "agent": from_agent,
+            "agent": resolved_agent,
             "tags": ["handoff"],
             "related": [],
         }
+        if declared_author is not None:
+            fm["declared_author"] = declared_author
         content = _build_frontmatter(fm) + f"\n# {title}\n\n{body}\n"
         content_hash = _sha256(content)
 
         doc_id, changed = await _upsert_document(
-            pool, rel_path, fm, body, content_hash, "handoff", from_agent,
+            pool, rel_path, fm, body, content_hash, "handoff", resolved_agent,
         )
         if not changed:
             await log_audit(
