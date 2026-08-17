@@ -739,3 +739,197 @@ async def test_tampered_signature_blocks_before_domain_write(
     )
     # Only the HMAC candidate fetch happened — no domain reads/writes.
     assert pool.fetch_calls == 1
+
+
+# ===========================================================================
+# C1 (extension, 2026-08-17) — append_daily_log was missed by the original
+# fix: it stamped documents.agent + the entry byline from the tool parameter.
+# ===========================================================================
+
+
+def test_c1_append_daily_log_uses_authenticated_agent() -> None:
+    """Static guard: the daily-log tool must not stamp identity from the
+    ``agent`` parameter (documents.agent, audit_log, entry byline).
+    """
+    src = (
+        Path(__file__).resolve().parent.parent
+        / "services" / "memory_mcp" / "tools.py"
+    ).read_text(encoding="utf-8")
+    start = src.index("async def append_daily_log")
+    end = src.index("async def update_index", start)
+    fn_src = src[start:end]
+
+    assert "resolved_agent = agent_ctx.agent" in fn_src, (
+        "append_daily_log must resolve identity from the authenticated caller"
+    )
+    # Pre-fix patterns: parameter used as identity.
+    assert '"daily", agent,' not in fn_src, (
+        "documents.agent must come from resolved_agent, not the parameter"
+    )
+    assert "[{agent}]" not in fn_src, (
+        "entry byline must come from the authenticated agent"
+    )
+
+
+@pytest.mark.asyncio
+async def test_append_daily_log_real_handler_rejects_spoofed_agent(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Drive the real ``append_daily_log`` under HMAC as ``tyrande`` while
+    passing ``agent="nova"``: the vault entry, documents.agent and
+    audit_log must all say tyrande; nova survives only as declared author.
+    """
+    from services.memory_mcp import tools as tmod
+
+    secret = "daily-tyrande-secret"
+    monkeypatch.setenv("GBRAIN_HMAC_SECRETS_JSON", f'{{"tyrande": "{secret}"}}')
+
+    body_bytes = b'{"jsonrpc":"2.0","method":"tools/call"}'
+    ts = int(time.time())
+    sig = _sign(secret, body_bytes, ts)
+    av = HmacAuthValue(signature=sig, timestamp=str(ts), body=body_bytes)
+
+    audit_calls: list[dict[str, Any]] = []
+
+    async def _spy_log_audit(
+        _pool, agent, tool, args_summary, status, latency_ms, error=None
+    ):
+        audit_calls.append({"agent": agent, "tool": tool, "args": args_summary})
+
+    monkeypatch.setattr(tmod, "log_audit", _spy_log_audit)
+
+    class _DailyPool:
+        def __init__(self):
+            self.insert_args: tuple[Any, ...] = ()
+
+        async def fetch(self, query, *args):
+            if "hmac_secret_sha256" in query:
+                return [_hmac_row("tyrande", secret, write_scopes=["20-daily"])]
+            return []
+
+        async def fetchrow(self, query, *args):
+            return None  # no existing document row at this path
+
+        async def fetchval(self, query, *args):
+            self.insert_args = args
+            return 7
+
+        async def execute(self, query, *args):
+            return "OK"
+
+    pool = _DailyPool()
+    captured: dict[str, Any] = {}
+
+    class _CaptureMCP:
+        def tool(self, *_a, **kw):
+            def deco(fn):
+                captured[fn.__name__] = fn
+                return fn
+
+            return deco
+
+    async def _get_pool():
+        return pool
+
+    tmod.register_tools(_CaptureMCP(), str(tmp_path), _get_pool, tool_set="all")
+    append_daily_log = captured["append_daily_log"]
+
+    tok = tmod._REQUEST_AUTH.set(av)
+    try:
+        result = await append_daily_log(agent="nova", body="entry body")
+    finally:
+        tmod._REQUEST_AUTH.reset(tok)
+
+    assert result.startswith("appended:")
+    rel_path = result.split(":", 1)[1].strip()
+    md = (tmp_path / rel_path).read_text(encoding="utf-8")
+
+    # Byline carries the authenticated identity; the spoof is visible but
+    # never replaces it.
+    assert "[tyrande (declared: nova)]" in md
+    assert "[nova]" not in md
+
+    # documents.agent (6th INSERT parameter) must be the authenticated agent.
+    assert pool.insert_args, "expected a documents INSERT"
+    assert pool.insert_args[5] == "tyrande"
+
+    # audit_log identity + details.
+    assert audit_calls[-1]["agent"] == "tyrande"
+    assert audit_calls[-1]["tool"] == "append_daily_log"
+    assert audit_calls[-1]["args"]["agent"] == "tyrande"
+    assert audit_calls[-1]["args"]["declared_author"] == "nova"
+
+
+@pytest.mark.asyncio
+async def test_append_daily_log_honest_caller_has_no_declared_author(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """When the parameter matches the authenticated identity, the byline
+    stays plain and no declared_author is recorded.
+    """
+    from services.memory_mcp import tools as tmod
+
+    secret = "daily-honest-secret"
+    monkeypatch.setenv("GBRAIN_HMAC_SECRETS_JSON", f'{{"tyrande": "{secret}"}}')
+
+    body_bytes = b'{"jsonrpc":"2.0","method":"tools/call"}'
+    ts = int(time.time())
+    av = HmacAuthValue(
+        signature=_sign(secret, body_bytes, ts),
+        timestamp=str(ts),
+        body=body_bytes,
+    )
+
+    audit_calls: list[dict[str, Any]] = []
+
+    async def _spy_log_audit(
+        _pool, agent, tool, args_summary, status, latency_ms, error=None
+    ):
+        audit_calls.append({"agent": agent, "args": args_summary})
+
+    monkeypatch.setattr(tmod, "log_audit", _spy_log_audit)
+
+    class _DailyPool:
+        async def fetch(self, query, *args):
+            if "hmac_secret_sha256" in query:
+                return [_hmac_row("tyrande", secret, write_scopes=["20-daily"])]
+            return []
+
+        async def fetchrow(self, query, *args):
+            return None
+
+        async def fetchval(self, query, *args):
+            return 7
+
+        async def execute(self, query, *args):
+            return "OK"
+
+    captured: dict[str, Any] = {}
+
+    class _CaptureMCP:
+        def tool(self, *_a, **kw):
+            def deco(fn):
+                captured[fn.__name__] = fn
+                return fn
+
+            return deco
+
+    async def _get_pool():
+        return _DailyPool()
+
+    tmod.register_tools(_CaptureMCP(), str(tmp_path), _get_pool, tool_set="all")
+
+    tok = tmod._REQUEST_AUTH.set(av)
+    try:
+        result = await captured["append_daily_log"](
+            agent="tyrande", body="honest entry"
+        )
+    finally:
+        tmod._REQUEST_AUTH.reset(tok)
+
+    md = (tmp_path / result.split(":", 1)[1].strip()).read_text(encoding="utf-8")
+    assert "[tyrande]" in md
+    assert "declared" not in md
+    assert "declared_author" not in audit_calls[-1]["args"]

@@ -1204,12 +1204,23 @@ def register_tools(
                 f"Agent '{agent_ctx.agent}' cannot write to {scope}"
             )
 
+        # C1 fix (security): identity stamped into documents.agent, audit_log
+        # and the entry header MUST be the authenticated caller, never the
+        # tool parameter. The optional ``agent`` parameter is preserved for
+        # human-readable attribution only. The three decision-family tools
+        # were patched with C1; this tool was missed and is fixed here.
+        resolved_agent = agent_ctx.agent
+        declared_author = agent if (agent and agent != agent_ctx.agent) else None
+
         today = _today_iso()
         rel_path = f"{scope}/{today}.md"
         abs_path = validate_path(rel_path, vault_root)
 
         now_ts = _now_iso()
-        entry = f"\n## {now_ts} [{agent}]\n\n{body}\n"
+        byline = resolved_agent
+        if declared_author is not None:
+            byline = f"{resolved_agent} (declared: {declared_author})"
+        entry = f"\n## {now_ts} [{byline}]\n\n{body}\n"
 
         # Append to existing file or create new one
         if abs_path.exists():
@@ -1233,13 +1244,18 @@ def register_tools(
         fm_for_db = {"type": "daily", "date": today}
         doc_id, _ = await _upsert_document(
             pool, rel_path, fm_for_db, new_content, content_hash,
-            "daily", agent,
+            "daily", resolved_agent,
         )
 
         # No embedding queue for daily logs (chronological, not semantic)
+        audit_args: dict[str, object] = {
+            "agent": resolved_agent, "path": rel_path,
+        }
+        if declared_author is not None:
+            audit_args["declared_author"] = declared_author
         await log_audit(
-            pool, agent_ctx.agent, "append_daily_log",
-            {"agent": agent, "path": rel_path},
+            pool, resolved_agent, "append_daily_log",
+            audit_args,
             "ok", int((time.monotonic() - t0) * 1000),
         )
         return f"appended: {rel_path}"
