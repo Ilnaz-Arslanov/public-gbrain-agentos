@@ -13,7 +13,13 @@ from __future__ import annotations
 
 import pytest
 
-from services.memory_mcp.tools import OPS_SCOPE, _resolve_write_target
+from services.memory_mcp.tools import (
+    OPS_SCOPE,
+    _agent_path_component,
+    _assert_ops_subtree_owner,
+    _canonical_kind_from_path,
+    _resolve_write_target,
+)
 from services.shared.auth import AgentContext
 
 
@@ -69,3 +75,71 @@ class TestResolveWriteTarget:
         scope, prefix = _resolve_write_target(_ctx("irek", [OPS_SCOPE]), canonical)
         assert scope == OPS_SCOPE
         assert prefix == f"{OPS_SCOPE}/irek/{canonical}"
+
+
+class TestAgentPathComponent:
+    """Agent -> path component must be injective (Codex review, 2026-08-24)."""
+
+    def test_plain_name_stays_itself(self) -> None:
+        """Ordinary agent names keep readable, unsuffixed folders."""
+        assert _agent_path_component("cody") == "cody"
+        assert _agent_path_component("ivi2") == "ivi2"
+
+    def test_colliding_names_get_distinct_components(self) -> None:
+        """Two names that slugify alike must not share one subtree."""
+        assert _agent_path_component("ivi.2") != _agent_path_component("ivi-2")
+
+    def test_component_is_stable(self) -> None:
+        """Same name, same folder -- across calls and restarts."""
+        assert _agent_path_component("Ильназ") == _agent_path_component("Ильназ")
+
+    def test_component_is_path_safe(self) -> None:
+        """Nothing that could climb out of the subtree survives."""
+        for hostile in ["../../etc", "a/b", "~root", ""]:
+            component = _agent_path_component(hostile)
+            assert "/" not in component
+            assert ".." not in component
+            assert "~" not in component
+            assert component
+
+
+class TestCanonicalKind:
+    """Nested 50-ops notes keep the guarantees of their canonical scope."""
+
+    def test_top_level_path_is_its_own_kind(self) -> None:
+        assert _canonical_kind_from_path("30-decisions/note.md") == "30-decisions"
+
+    def test_nested_decision_is_still_a_decision(self) -> None:
+        """Immutability must not be escapable by nesting under 50-ops."""
+        path = "50-ops/ivi/30-decisions/2026-08-24-note.md"
+        assert _canonical_kind_from_path(path) == "30-decisions"
+
+    def test_bare_ops_path_falls_back_to_scope(self) -> None:
+        assert _canonical_kind_from_path("50-ops/ivi") == OPS_SCOPE
+
+
+class TestOpsSubtreeOwner:
+    """Write permission on 50-ops is not permission to touch another agent."""
+
+    def test_own_subtree_passes(self) -> None:
+        ctx = _ctx("ivi", [OPS_SCOPE])
+        _assert_ops_subtree_owner(ctx, "50-ops/ivi/20-daily/2026-08-24.md")
+
+    def test_foreign_subtree_denied(self) -> None:
+        ctx = _ctx("ivi", [OPS_SCOPE])
+        with pytest.raises(PermissionError, match="may only touch"):
+            _assert_ops_subtree_owner(ctx, "50-ops/ilnar/20-daily/2026-08-24.md")
+
+    def test_wildcard_token_is_not_a_bypass(self) -> None:
+        """'*' grants the scope, not other agents' subtrees inside it."""
+        with pytest.raises(PermissionError):
+            _assert_ops_subtree_owner(_ctx("cody", ["*"]), "50-ops/ivi/x.md")
+
+    def test_scope_root_denied(self) -> None:
+        """A bare '50-ops' target belongs to nobody in particular."""
+        with pytest.raises(PermissionError):
+            _assert_ops_subtree_owner(_ctx("ivi", [OPS_SCOPE]), "50-ops")
+
+    def test_other_scopes_untouched(self) -> None:
+        """Outside 50-ops the guard is a no-op -- ordinary rights decide."""
+        _assert_ops_subtree_owner(_ctx("cody", ["*"]), "30-decisions/note.md")

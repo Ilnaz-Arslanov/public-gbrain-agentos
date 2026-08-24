@@ -249,6 +249,61 @@ def _scope_from_path(rel_path: str) -> str:
     return rel_path.split("/")[0]
 
 
+def _agent_path_component(agent: str) -> str:
+    """Path-safe, collision-free path component for an agent name.
+
+    ``_slugify`` is lossy (transliterates, drops punctuation, truncates at
+    :data:`MAX_SLUG_LENGTH`), and token issuance accepts any unique agent
+    name. Two distinct agents whose names normalize to the same slug would
+    otherwise share a subtree -- same-title notes overwriting each other,
+    daily logs appending into one file. When the name is not already its own
+    slug, a hash of the original name is appended so the mapping stays
+    injective.
+    """
+    slug = _slugify(agent)
+    if slug == agent:
+        return slug
+    return f"{slug}-{_sha256(agent)[:8]}"
+
+
+def _canonical_kind_from_path(rel_path: str) -> str:
+    """Canonical scope of a document, seeing through the 50-ops nesting.
+
+    ``50-ops/<agent>/30-decisions/x.md`` is a decision and must obey the
+    same append-only rule as ``30-decisions/x.md``. Guards that switch on
+    the top-level scope alone would miss it.
+    """
+    parts = rel_path.split("/")
+    if parts[0] == OPS_SCOPE and len(parts) >= 3:
+        return parts[2]
+    return parts[0]
+
+
+def _assert_ops_subtree_owner(agent_ctx: AgentContext, rel_path: str) -> None:
+    """Inside 50-ops, an agent may only mutate its own subtree.
+
+    ``50-ops`` is one flat scope by design -- agents there read each other.
+    Write permission is therefore not enough to authorize a mutation: it
+    would let one operator agent overwrite another's notes. Creation already
+    routes into the caller's own subfolder; this closes the same hole for
+    tools that take a caller-supplied path.
+
+    No-op for paths outside ``50-ops``.
+
+    Raises:
+        PermissionError: Path belongs to another agent's subtree.
+    """
+    parts = rel_path.split("/")
+    if parts[0] != OPS_SCOPE:
+        return
+    owner = _agent_path_component(agent_ctx.agent)
+    if len(parts) < 2 or parts[1] != owner:
+        raise PermissionError(
+            f"Agent '{agent_ctx.agent}' may only touch {OPS_SCOPE}/{owner}/, "
+            f"not '{rel_path}'"
+        )
+
+
 def _resolve_write_target(
     agent_ctx: AgentContext,
     canonical_scope: str,
@@ -280,7 +335,8 @@ def _resolve_write_target(
     if check_write_scope(agent_ctx, canonical_scope):
         return canonical_scope, canonical_scope
     if check_write_scope(agent_ctx, OPS_SCOPE):
-        return OPS_SCOPE, f"{OPS_SCOPE}/{_slugify(agent_ctx.agent)}/{canonical_scope}"
+        component = _agent_path_component(agent_ctx.agent)
+        return OPS_SCOPE, f"{OPS_SCOPE}/{component}/{canonical_scope}"
     raise PermissionError(
         f"Agent '{agent_ctx.agent}' cannot write to {canonical_scope} "
         f"and has no {OPS_SCOPE} fallback"
@@ -1310,6 +1366,7 @@ def register_tools(
             raise PermissionError(
                 f"Agent '{agent_ctx.agent}' cannot write to {scope}"
             )
+        _assert_ops_subtree_owner(agent_ctx, folder)
 
         folder_path = validate_path(folder, vault_root)
         if not folder_path.is_dir():
@@ -1356,12 +1413,15 @@ def register_tools(
         agent_ctx = await _authenticate_request(ctx, pool)
 
         scope = _scope_from_path(path)
-        # Immutability guard: decisions/error-patterns are append-only, not editable
-        if scope == "30-decisions":
+        # Immutability guard: decisions/error-patterns are append-only, not
+        # editable. Resolved by canonical kind so a decision nested under
+        # 50-ops/<agent>/30-decisions/ is just as immutable as a top-level one.
+        kind = _canonical_kind_from_path(path)
+        if kind == "30-decisions":
             raise PermissionError(
                 f"Decisions are immutable. Use supersede_decision(old_path={path!r}, ...) instead."
             )
-        if scope == "80-error-patterns":
+        if kind == "80-error-patterns":
             raise PermissionError(
                 f"Error-patterns are immutable. Create a new note via create_error_pattern_note instead."
             )
@@ -1369,6 +1429,7 @@ def register_tools(
             raise PermissionError(
                 f"Agent '{agent_ctx.agent}' cannot write to {scope}"
             )
+        _assert_ops_subtree_owner(agent_ctx, path)
 
         abs_path = validate_path(path, vault_root)
         if not abs_path.exists():
