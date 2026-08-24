@@ -64,21 +64,22 @@ def test_parse_tool_set_rejects_unknown() -> None:
 # should_register_tool policy
 # ---------------------------------------------------------------------------
 def test_memory_core_tools_policy() -> None:
-    """Core mode allows exactly the four operational memory tools."""
+    """Core mode allows the seven creation tools -- and no mutation tools."""
     core_memory = {
         "create_decision_note",
         "create_handoff",
         "append_daily_log",
         "supersede_decision",
+        "create_runbook_note",
+        "create_error_pattern_note",
+        "create_external_note",
     }
     for name in core_memory:
         assert should_register_tool("memory_mcp", name, "core") is True
 
-    # Other memory tools should be hidden in core.
+    # Mutation + slot tools stay hidden in core: editing an existing
+    # document is a separate decision, not part of the write surface.
     for name in [
-        "create_runbook_note",
-        "create_error_pattern_note",
-        "create_external_note",
         "update_index",
         "update_document",
         "slot_list",

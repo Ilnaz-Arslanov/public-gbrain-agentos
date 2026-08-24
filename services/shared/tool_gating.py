@@ -25,6 +25,13 @@ CORE_TOOLS_BY_SERVER: dict[str, frozenset[str]] = {
         "create_handoff",
         "append_daily_log",
         "supersede_decision",
+        # Creation tools for the non-decision scopes. Without them every
+        # runbook and error pattern gets filed as a decision -- that is how
+        # 30-decisions became the whole archive. Mutation tools
+        # (update_document, update_index) stay out of core on purpose.
+        "create_runbook_note",
+        "create_error_pattern_note",
+        "create_external_note",
     }),
     "recall_mcp": frozenset({
         "recall",
