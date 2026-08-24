@@ -656,7 +656,7 @@ def register_tools(
             WHERE scope = $1
               AND source_type = 'decision'
               AND path != $2
-              AND path LIKE $3 || '/%'
+              AND left(path, length($3) + 1) = $3 || '/'
               AND (frontmatter->>'is_latest' IS NULL
                    OR frontmatter->>'is_latest' != 'false')
             """,
@@ -1175,7 +1175,11 @@ def register_tools(
         scope, path_prefix = _resolve_write_target(agent_ctx, "50-external")
 
         slug = _slugify(title)
-        safe_source = re.sub(r"[^a-z0-9_-]+", "-", source.lower()).strip("-")
+        # _slugify, not a bare regex: a Cyrillic or symbol-only source
+        # sanitized to an empty string, which produced a '//' in the path.
+        # It transliterates and falls back to a content hash, so the
+        # component is never empty.
+        safe_source = _slugify(source)
         rel_path = f"{path_prefix}/{safe_source}/{_today_iso()}-{slug}.md"
         abs_path = validate_path(rel_path, vault_root)
 

@@ -19,6 +19,7 @@ from services.memory_mcp.tools import (
     _assert_ops_subtree_owner,
     _canonical_kind_from_path,
     _resolve_write_target,
+    _slugify,
 )
 from services.memory_mcp.path_guard import normalize_rel_path
 from services.shared.auth import AgentContext
@@ -191,3 +192,21 @@ class TestPathSpellingGuard:
     def test_dot_spelling_would_have_hidden_the_kind(self) -> None:
         """Proves the bite: without the guard, classification was bypassable."""
         assert _canonical_kind_from_path("50-ops/ivi/./30-decisions/n.md") != "30-decisions"
+
+
+class TestSourceComponent:
+    """External-note source must always yield a non-empty path component.
+
+    Third Codex round: the stricter path validation turned a previously
+    silent '//' into a hard failure for sources with no ASCII alphanumerics.
+    """
+
+    def test_cyrillic_source_transliterates(self) -> None:
+        assert _slugify("телеграм") == "telegram"
+
+    def test_symbol_only_source_is_not_empty(self) -> None:
+        for source in ["!!!", "—", "   ", "***"]:
+            assert _slugify(source)
+
+    def test_distinct_empty_sources_stay_distinct(self) -> None:
+        assert _slugify("!!!") != _slugify("***")
