@@ -10,6 +10,7 @@ ALLOWED_SCOPES = frozenset({
     "40-projects",
     "50-external",
     "50-knowledge",
+    "50-ops",
     "60-tasks",
     "70-runbooks",
     "80-error-patterns",

@@ -49,7 +49,12 @@ class TestPathGuard:
             assert str(result).startswith(str(tmp_path.resolve()))
 
     def test_scope_count(self) -> None:
-        assert len(ALLOWED_SCOPES) == 13
+        assert len(ALLOWED_SCOPES) == 14
+
+    def test_ops_scope_allowed(self, tmp_path: Path) -> None:
+        """50-ops holds per-agent subfolders for operator-run agents."""
+        result = validate_path("50-ops/ivi/20-daily/2026-08-24.md", str(tmp_path))
+        assert str(result).startswith(str(tmp_path.resolve()))
 
     def test_empty_path_raises(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match="must not be empty"):

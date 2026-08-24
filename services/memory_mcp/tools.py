@@ -50,6 +50,7 @@ MAX_SLUG_LENGTH = 60
 # ---------------------------------------------------------------------------
 
 SLOTS_SCOPE = "slots"
+OPS_SCOPE = "50-ops"
 SLOT_LABEL_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 DEFAULT_SLOT_SIZE_LIMIT = 2000
 DEFAULT_SLOT_HARD_CAP = 20000
@@ -246,6 +247,44 @@ def _build_frontmatter(fields: dict[str, object]) -> str:
 def _scope_from_path(rel_path: str) -> str:
     """Extract top-level scope from a relative vault path."""
     return rel_path.split("/")[0]
+
+
+def _resolve_write_target(
+    agent_ctx: AgentContext,
+    canonical_scope: str,
+) -> tuple[str, str]:
+    """Pick the scope a note of this kind lands in, from the agent's rights.
+
+    Agents holding ``canonical_scope`` write there, as before. Agents that
+    do not, but hold :data:`OPS_SCOPE`, write into their own subfolder of
+    it: ``50-ops/<agent>/<canonical_scope>/...``. That is what keeps an
+    operator-run agent able to journal after the shared scopes are taken
+    off its token -- the scope is hardcoded per tool, so without this
+    fallback losing ``30-decisions`` would leave it with nothing to write.
+
+    Permission stays the only input: no tool knows or asks whether an agent
+    is "ours" or "an operator's". ``50-ops`` is one flat scope on purpose --
+    operator agents read each other, our scopes stay out of reach.
+
+    Args:
+        agent_ctx: Authenticated agent context.
+        canonical_scope: Scope the tool writes to by default.
+
+    Returns:
+        ``(scope, path_prefix)`` -- scope for the permission/index record,
+        prefix to build the relative path from.
+
+    Raises:
+        PermissionError: Agent holds neither scope.
+    """
+    if check_write_scope(agent_ctx, canonical_scope):
+        return canonical_scope, canonical_scope
+    if check_write_scope(agent_ctx, OPS_SCOPE):
+        return OPS_SCOPE, f"{OPS_SCOPE}/{_slugify(agent_ctx.agent)}/{canonical_scope}"
+    raise PermissionError(
+        f"Agent '{agent_ctx.agent}' cannot write to {canonical_scope} "
+        f"and has no {OPS_SCOPE} fallback"
+    )
 
 
 def _supersede_threshold_env(name: str, default: float) -> float:
@@ -515,10 +554,7 @@ def register_tools(
         t0 = time.monotonic()
         pool: asyncpg.Pool = await get_pool_fn()  # type: ignore[misc]
         agent_ctx = await _authenticate_request(ctx, pool)
-        scope = "30-decisions"
-
-        if not check_write_scope(agent_ctx, scope):
-            raise PermissionError(f"Agent '{agent_ctx.agent}' cannot write to {scope}")
+        scope, path_prefix = _resolve_write_target(agent_ctx, "30-decisions")
 
         # C1 fix (security): identity used for audit_log + documents.agent
         # MUST be the authenticated caller, never the tool parameter. The
@@ -527,7 +563,7 @@ def register_tools(
         resolved_agent = agent_ctx.agent
         declared_author = agent if (agent and agent != agent_ctx.agent) else None
         slug = _slugify(title)
-        rel_path = f"{scope}/{_today_iso()}-{slug}.md"
+        rel_path = f"{path_prefix}/{_today_iso()}-{slug}.md"
         abs_path = validate_path(rel_path, vault_root)
 
         # Read thresholds dynamically per-call so tests + operators can flip
@@ -559,11 +595,13 @@ def register_tools(
             WHERE scope = $1
               AND source_type = 'decision'
               AND path != $2
+              AND path LIKE $3 || '/%'
               AND (frontmatter->>'is_latest' IS NULL
                    OR frontmatter->>'is_latest' != 'false')
             """,
             scope,
             rel_path,
+            path_prefix,
         )
 
         existing_rows: list[dict[str, Any]] = []
@@ -943,17 +981,14 @@ def register_tools(
         t0 = time.monotonic()
         pool: asyncpg.Pool = await get_pool_fn()  # type: ignore[misc]
         agent_ctx = await _authenticate_request(ctx, pool)
-        scope = "70-runbooks"
-
-        if not check_write_scope(agent_ctx, scope):
-            raise PermissionError(f"Agent '{agent_ctx.agent}' cannot write to {scope}")
+        scope, path_prefix = _resolve_write_target(agent_ctx, "70-runbooks")
 
         # C1 fix (security): identity stays authenticated. Tool ``agent``
         # parameter is human-attribution only — never the audit identity.
         resolved_agent = agent_ctx.agent
         declared_author = agent if (agent and agent != agent_ctx.agent) else None
         slug = _slugify(title)
-        rel_path = f"{scope}/{slug}.md"
+        rel_path = f"{path_prefix}/{slug}.md"
         abs_path = validate_path(rel_path, vault_root)
 
         fm: dict[str, Any] = {
@@ -1010,17 +1045,14 @@ def register_tools(
         t0 = time.monotonic()
         pool: asyncpg.Pool = await get_pool_fn()  # type: ignore[misc]
         agent_ctx = await _authenticate_request(ctx, pool)
-        scope = "80-error-patterns"
-
-        if not check_write_scope(agent_ctx, scope):
-            raise PermissionError(f"Agent '{agent_ctx.agent}' cannot write to {scope}")
+        scope, path_prefix = _resolve_write_target(agent_ctx, "80-error-patterns")
 
         # C1 fix (security): identity stays authenticated. Tool ``agent``
         # parameter is human-attribution only — never the audit identity.
         resolved_agent = agent_ctx.agent
         declared_author = agent if (agent and agent != agent_ctx.agent) else None
         slug = _slugify(title)
-        rel_path = f"{scope}/{_today_iso()}-{slug}.md"
+        rel_path = f"{path_prefix}/{_today_iso()}-{slug}.md"
         abs_path = validate_path(rel_path, vault_root)
 
         fm: dict[str, Any] = {
@@ -1079,16 +1111,11 @@ def register_tools(
         t0 = time.monotonic()
         pool: asyncpg.Pool = await get_pool_fn()  # type: ignore[misc]
         agent_ctx = await _authenticate_request(ctx, pool)
-        scope = "50-external"
-
-        if not check_write_scope(agent_ctx, scope):
-            raise PermissionError(
-                f"Agent '{agent_ctx.agent}' cannot write to {scope}"
-            )
+        scope, path_prefix = _resolve_write_target(agent_ctx, "50-external")
 
         slug = _slugify(title)
         safe_source = re.sub(r"[^a-z0-9_-]+", "-", source.lower()).strip("-")
-        rel_path = f"{scope}/{safe_source}/{_today_iso()}-{slug}.md"
+        rel_path = f"{path_prefix}/{safe_source}/{_today_iso()}-{slug}.md"
         abs_path = validate_path(rel_path, vault_root)
 
         fm = {
@@ -1207,12 +1234,7 @@ def register_tools(
         t0 = time.monotonic()
         pool: asyncpg.Pool = await get_pool_fn()  # type: ignore[misc]
         agent_ctx = await _authenticate_request(ctx, pool)
-        scope = "20-daily"
-
-        if not check_write_scope(agent_ctx, scope):
-            raise PermissionError(
-                f"Agent '{agent_ctx.agent}' cannot write to {scope}"
-            )
+        scope, path_prefix = _resolve_write_target(agent_ctx, "20-daily")
 
         # C1 fix (security): identity stamped into documents.agent, audit_log
         # and the entry header MUST be the authenticated caller, never the
@@ -1223,7 +1245,7 @@ def register_tools(
         declared_author = agent if (agent and agent != agent_ctx.agent) else None
 
         today = _today_iso()
-        rel_path = f"{scope}/{today}.md"
+        rel_path = f"{path_prefix}/{today}.md"
         abs_path = validate_path(rel_path, vault_root)
 
         now_ts = _now_iso()
@@ -1402,12 +1424,7 @@ def register_tools(
         t0 = time.monotonic()
         pool: asyncpg.Pool = await get_pool_fn()  # type: ignore[misc]
         agent_ctx = await _authenticate_request(ctx, pool)
-        scope = "30-decisions"
-
-        if not check_write_scope(agent_ctx, scope):
-            raise PermissionError(
-                f"Agent '{agent_ctx.agent}' cannot write to {scope}"
-            )
+        scope, path_prefix = _resolve_write_target(agent_ctx, "30-decisions")
 
         # Verify old document exists
         old_abs = validate_path(old_path, vault_root)
@@ -1415,7 +1432,7 @@ def register_tools(
             raise ValueError(f"Original decision not found: {old_path}")
 
         slug = _slugify(new_title)
-        rel_path = f"{scope}/{_today_iso()}-{slug}.md"
+        rel_path = f"{path_prefix}/{_today_iso()}-{slug}.md"
         abs_path = validate_path(rel_path, vault_root)
 
         supersedes_line = f"Supersedes [[{old_path}]]"
