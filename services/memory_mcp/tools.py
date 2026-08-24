@@ -29,7 +29,7 @@ from services.shared.config import Config, _env_float_clamped
 from services.shared.tool_gating import should_register_tool
 
 from .jaccard import find_supersession_candidates, tokenize
-from .path_guard import validate_path
+from .path_guard import normalize_rel_path, validate_path
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +52,9 @@ MAX_SLUG_LENGTH = 60
 SLOTS_SCOPE = "slots"
 OPS_SCOPE = "50-ops"
 SLOT_LABEL_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+# Agent names safe to use verbatim as a path component. Deliberately
+# excludes a leading '_' -- that prefix is reserved for digest components.
+AGENT_COMPONENT_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,62}$")
 DEFAULT_SLOT_SIZE_LIMIT = 2000
 DEFAULT_SLOT_HARD_CAP = 20000
 SLOT_WARNING_RATIO = 0.8
@@ -250,20 +253,22 @@ def _scope_from_path(rel_path: str) -> str:
 
 
 def _agent_path_component(agent: str) -> str:
-    """Path-safe, collision-free path component for an agent name.
+    """Path-safe, injective path component for an agent name.
 
-    ``_slugify`` is lossy (transliterates, drops punctuation, truncates at
-    :data:`MAX_SLUG_LENGTH`), and token issuance accepts any unique agent
-    name. Two distinct agents whose names normalize to the same slug would
-    otherwise share a subtree -- same-title notes overwriting each other,
-    daily logs appending into one file. When the name is not already its own
-    slug, a hash of the original name is appended so the mapping stays
-    injective.
+    Token issuance accepts any unique agent name, and two agents sharing a
+    subtree would overwrite each other's notes -- so this mapping must never
+    send two names to one component.
+
+    Names that are already path-safe are used verbatim, which keeps folders
+    readable (``cody`` -> ``cody``). Anything else is replaced by a digest
+    behind an ``_`` prefix. The two outputs cannot collide because a
+    path-safe name may not start with ``_``, and appending a digest to a
+    lossy slug would not have been enough: an agent literally named
+    ``ivi-2-<digest>`` would have collided with the encoding of ``ivi.2``.
     """
-    slug = _slugify(agent)
-    if slug == agent:
-        return slug
-    return f"{slug}-{_sha256(agent)[:8]}"
+    if AGENT_COMPONENT_RE.match(agent) and agent not in {".", ".."}:
+        return agent
+    return f"_{_sha256(agent)[:16]}"
 
 
 def _canonical_kind_from_path(rel_path: str) -> str:
@@ -1361,6 +1366,7 @@ def register_tools(
         pool: asyncpg.Pool = await get_pool_fn()  # type: ignore[misc]
         agent_ctx = await _authenticate_request(ctx, pool)
 
+        folder = normalize_rel_path(folder)
         scope = _scope_from_path(folder)
         if not check_write_scope(agent_ctx, scope):
             raise PermissionError(
@@ -1412,6 +1418,7 @@ def register_tools(
         pool: asyncpg.Pool = await get_pool_fn()  # type: ignore[misc]
         agent_ctx = await _authenticate_request(ctx, pool)
 
+        path = normalize_rel_path(path)
         scope = _scope_from_path(path)
         # Immutability guard: decisions/error-patterns are append-only, not
         # editable. Resolved by canonical kind so a decision nested under
@@ -1488,6 +1495,7 @@ def register_tools(
         scope, path_prefix = _resolve_write_target(agent_ctx, "30-decisions")
 
         # Verify old document exists
+        old_path = normalize_rel_path(old_path)
         old_abs = validate_path(old_path, vault_root)
         if not old_abs.exists():
             raise ValueError(f"Original decision not found: {old_path}")

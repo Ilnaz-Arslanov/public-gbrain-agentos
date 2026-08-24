@@ -19,6 +19,47 @@ ALLOWED_SCOPES = frozenset({
 })
 
 
+def normalize_rel_path(path: str) -> str:
+    """Reject non-canonical spellings of a vault-relative path.
+
+    Guards that classify a path by its segments (scope, owning agent,
+    canonical kind) must see the same segments the filesystem will. A
+    spelling like ``50-ops/ivi/./30-decisions/note.md`` resolves to a real
+    file but classifies as kind ``.`` -- enough to walk past an immutability
+    or ownership check. Rather than normalize silently, refuse: every caller
+    writes plain paths anyway, so a redundant segment means either a bug or
+    an attempt.
+
+    Args:
+        path: Relative path within the vault.
+
+    Returns:
+        The path unchanged, once every segment is proven meaningful.
+
+    Raises:
+        ValueError: Path is empty, absolute, or carries ``..``, ``~``,
+            ``.`` or empty segments.
+    """
+    if not path:
+        raise ValueError("Path must not be empty")
+
+    if "~" in path:
+        raise ValueError(f"Home expansion blocked: '~' in '{path}'")
+
+    if path.startswith("/"):
+        raise ValueError(f"Absolute paths blocked: '{path}'")
+
+    segments = path.split("/")
+    if ".." in segments:
+        raise ValueError(f"Path traversal blocked: '..' in '{path}'")
+    if "" in segments:
+        raise ValueError(f"Empty path segment in '{path}'")
+    if "." in segments:
+        raise ValueError(f"Redundant '.' segment in '{path}'")
+
+    return path
+
+
 def validate_path(path: str, vault_root: str) -> Path:
     """Validate and resolve a vault-relative path.
 
@@ -32,17 +73,7 @@ def validate_path(path: str, vault_root: str) -> Path:
     Raises:
         ValueError: If the path is unsafe or targets an unknown scope.
     """
-    if not path:
-        raise ValueError("Path must not be empty")
-
-    if ".." in path:
-        raise ValueError(f"Path traversal blocked: '..' in '{path}'")
-
-    if "~" in path:
-        raise ValueError(f"Home expansion blocked: '~' in '{path}'")
-
-    if path.startswith("/"):
-        raise ValueError(f"Absolute paths blocked: '{path}'")
+    path = normalize_rel_path(path)
 
     # Extract top-level scope from the path
     top_level = path.split("/")[0]

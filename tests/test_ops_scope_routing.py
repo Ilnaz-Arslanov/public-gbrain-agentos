@@ -20,6 +20,7 @@ from services.memory_mcp.tools import (
     _canonical_kind_from_path,
     _resolve_write_target,
 )
+from services.memory_mcp.path_guard import normalize_rel_path
 from services.shared.auth import AgentContext
 
 
@@ -89,6 +90,22 @@ class TestAgentPathComponent:
         """Two names that slugify alike must not share one subtree."""
         assert _agent_path_component("ivi.2") != _agent_path_component("ivi-2")
 
+    def test_digest_component_cannot_be_impersonated(self) -> None:
+        """A name spelled like someone else's digest component still differs.
+
+        Second Codex finding: appending a digest to a lossy slug was not
+        injective -- an agent literally named like the encoded form of
+        another agent mapped onto it.
+        """
+        encoded = _agent_path_component("иви 2")
+        assert encoded.startswith("_")
+        assert _agent_path_component(encoded) != encoded
+
+    def test_mapping_is_injective_across_awkward_names(self) -> None:
+        names = ["ivi.2", "ivi-2", "IVI-2", "ivi_2", "ivi 2", "иви-2", "_ivi-2"]
+        components = {_agent_path_component(n) for n in names}
+        assert len(components) == len(names)
+
     def test_component_is_stable(self) -> None:
         """Same name, same folder -- across calls and restarts."""
         assert _agent_path_component("Ильназ") == _agent_path_component("Ильназ")
@@ -143,3 +160,34 @@ class TestOpsSubtreeOwner:
     def test_other_scopes_untouched(self) -> None:
         """Outside 50-ops the guard is a no-op -- ordinary rights decide."""
         _assert_ops_subtree_owner(_ctx("cody", ["*"]), "30-decisions/note.md")
+
+
+class TestPathSpellingGuard:
+    """Non-canonical spellings must not slip past segment-based guards."""
+
+    def test_dot_segment_rejected(self) -> None:
+        """Second Codex finding: './' hid the canonical kind from the guard."""
+        with pytest.raises(ValueError, match="Redundant"):
+            normalize_rel_path("50-ops/ivi/./30-decisions/note.md")
+
+    def test_empty_segment_rejected(self) -> None:
+        with pytest.raises(ValueError, match="Empty path segment"):
+            normalize_rel_path("50-ops/ivi//30-decisions/note.md")
+
+    def test_traversal_and_home_still_rejected(self) -> None:
+        with pytest.raises(ValueError, match="traversal"):
+            normalize_rel_path("50-ops/ivi/../ilnar/note.md")
+        with pytest.raises(ValueError, match="Home expansion"):
+            normalize_rel_path("~/note.md")
+
+    def test_absolute_rejected(self) -> None:
+        with pytest.raises(ValueError, match="Absolute"):
+            normalize_rel_path("/etc/passwd")
+
+    def test_plain_path_passes_through(self) -> None:
+        path = "50-ops/ivi/30-decisions/2026-08-24-note.md"
+        assert normalize_rel_path(path) == path
+
+    def test_dot_spelling_would_have_hidden_the_kind(self) -> None:
+        """Proves the bite: without the guard, classification was bypassable."""
+        assert _canonical_kind_from_path("50-ops/ivi/./30-decisions/n.md") != "30-decisions"
