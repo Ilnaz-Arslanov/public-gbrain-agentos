@@ -7,7 +7,13 @@ from fastembed import TextEmbedding
 
 logger = logging.getLogger(__name__)
 
-BATCH_SIZE = 32
+# Peak RSS is dominated by the ONNX arena the batch allocates, not by the
+# model itself. Measured on prod (e5-large, fastembed 0.8.0): the model
+# alone sits at ~1.5 GB, a batch of 32 peaks at 3.1 GB, a batch of 8 at
+# 1.9 GB. The unit caps the worker at 2560M, so 32 put every document
+# longer than one batch into an OOM restart loop -- one 117 KB note stalled
+# the whole queue for eight days. 8 keeps a ~640 MB headroom.
+BATCH_SIZE = 8
 CACHE_MAX_SIZE = 512
 
 
