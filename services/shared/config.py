@@ -212,14 +212,20 @@ class Config:
             "GBRAIN_DIVERSIFY_MAX", "0", min_value=0, max_value=100
         )
     )
+    # Jaccard bands for decision supersession. Defaults re-based on the
+    # node D measurement of the live corpus (2026-08-30): max Jaccard over
+    # all 16110 pairs is 0.568, so the previous 0.85 auto threshold was
+    # unreachable rather than merely strict. Auto stays off (0.0) -- an
+    # unattended merge of two decisions is not a guess worth making; hints
+    # start at 0.35, where real near-duplicates begin.
     supersede_auto_threshold: float = field(
         default_factory=lambda: _env_float(
-            "GBRAIN_SUPERSEDE_AUTO", "0.85", min_value=0.0
+            "GBRAIN_SUPERSEDE_AUTO", "0.0", min_value=0.0
         )
     )
     supersede_hint_threshold: float = field(
         default_factory=lambda: _env_float(
-            "GBRAIN_SUPERSEDE_HINT", "0.70", min_value=0.0
+            "GBRAIN_SUPERSEDE_HINT", "0.35", min_value=0.0
         )
     )
     hmac_timestamp_tolerance_seconds: int = field(

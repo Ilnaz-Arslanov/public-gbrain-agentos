@@ -55,6 +55,10 @@ SLOT_LABEL_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 # Agent names safe to use verbatim as a path component. Deliberately
 # excludes a leading '_' -- that prefix is reserved for digest components.
 AGENT_COMPONENT_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,62}$")
+# Shortest ``basis`` accepted by verify_note. Long enough to exclude "ok"
+# and "done", short enough for a real command like ``psql -c 'select 1'``.
+MIN_VERIFY_BASIS_LENGTH = 8
+
 DEFAULT_SLOT_SIZE_LIMIT = 2000
 DEFAULT_SLOT_HARD_CAP = 20000
 SLOT_WARNING_RATIO = 0.8
@@ -217,6 +221,44 @@ def _today_iso() -> str:
 def _now_iso() -> str:
     """Return current UTC timestamp in ISO 8601."""
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _parse_iso_ts(value: object) -> datetime | None:
+    """Parse a frontmatter timestamp into an aware datetime, or None.
+
+    Accepts the two shapes the vault actually carries: the strict
+    ``YYYY-MM-DDTHH:MM:SSZ`` written by ``_now_iso`` and the bare
+    ``YYYY-MM-DD`` used by daily logs. Anything else returns None so the
+    caller falls back to the column DEFAULT (now()).
+    """
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    if not isinstance(value, str) or not value:
+        return None
+    raw = value.strip()
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _with_freshness(fm: dict[str, Any]) -> dict[str, Any]:
+    """Mirror the freshness projection into frontmatter (migration 007).
+
+    The columns on ``documents`` are what recall queries; the markdown
+    frontmatter is canonical and must carry the same two fields so a vault
+    rebuild reproduces them. ``valid_from`` reuses the note's own
+    ``created``/``date`` rather than wall-clock now(), so re-indexing an
+    old file does not backdate-shift the fact.
+
+    Deliberately does NOT touch ``verified_at``/``verified_by``/``basis``:
+    writing a note is not re-verifying it. Those are set only by
+    ``verify_note``.
+    """
+    fm.setdefault("valid_from", fm.get("created") or fm.get("date") or _now_iso())
+    fm.setdefault("is_latest", True)
+    return fm
 
 
 def _handoff_rel_path(scope: str, from_agent: str, to_agent: str) -> str:
@@ -400,6 +442,11 @@ async def _upsert_document(
     """Insert or update document row. Returns (doc_id, is_new).
 
     If sha256 matches existing row, returns (doc_id, False) -- unchanged.
+
+    On INSERT, ``valid_from`` is taken from the frontmatter mirror so the
+    column agrees with the file. On UPDATE it is left alone on purpose:
+    editing a note does not move the moment its fact became true, and
+    overwriting it would erase the only record of when it did.
     """
     scope = _scope_from_path(rel_path)
 
@@ -433,8 +480,9 @@ async def _upsert_document(
     # Insert new document
     doc_id = await pool.fetchval(
         """
-        INSERT INTO documents (path, frontmatter, body, sha256, source_type, agent, scope)
-        VALUES ($1, $2::jsonb, $3, $4, $5, $6, $7)
+        INSERT INTO documents (path, frontmatter, body, sha256, source_type,
+                               agent, scope, valid_from)
+        VALUES ($1, $2::jsonb, $3, $4, $5, $6, $7, COALESCE($8, now()))
         RETURNING id
         """,
         rel_path,
@@ -444,6 +492,7 @@ async def _upsert_document(
         source_type,
         agent,
         scope,
+        _parse_iso_ts(frontmatter.get("valid_from")),
     )
     return int(doc_id), True
 
@@ -598,19 +647,24 @@ def register_tools(
     ) -> str:
         """Create a decision note in 30-decisions/.
 
-        Immutable by default -- use ``supersede_decision`` for business-level
-        chains. Jaccard auto-supersession runs before the insert: when the
-        new decision's token set overlaps an existing same-scope decision
-        with Jaccard >= ``GBRAIN_SUPERSEDE_AUTO`` (default 0.85), the old
-        decision's frontmatter is flipped to ``is_latest: false`` +
-        ``superseded_by: <new_path>`` inside a single transaction with the
-        new insert. When ``GBRAIN_SUPERSEDE_HINT`` (default 0.70) <=
-        Jaccard < auto threshold, the new doc is inserted unchanged and the
-        return value is a JSON string carrying ``suggested_supersedes``
-        for operator review.
+        Immutable by default -- use ``supersede_decision`` to retire one
+        explicitly. The note is written with ``valid_from`` and
+        ``is_latest`` in both its row and its frontmatter, so recall can
+        tell a current decision from a retired one.
 
-        Set ``GBRAIN_SUPERSEDE_AUTO=0`` to disable the auto branch entirely
-        (hints still surface in the 0.70-0.85 band).
+        A token-overlap check runs before the insert. Above
+        ``GBRAIN_SUPERSEDE_HINT`` (default 0.35) the new document is
+        inserted unchanged and the return value is a JSON string carrying
+        ``suggested_supersedes`` for review -- a suggestion, not an edit.
+        ``GBRAIN_SUPERSEDE_AUTO`` (default 0.0 = off) would instead close
+        the matching decision automatically; it is off because on this
+        corpus no pair has ever come close, and an unattended rewrite of
+        another agent's decision is not worth guessing at.
+
+        For semantic near-duplicates -- same claim, different words -- use
+        ``duplicate_candidates`` in recall-mcp. It cannot run here: a
+        document's embedding only exists after the ingest worker has
+        processed it, which is after this call returns.
         """
         t0 = time.monotonic()
         pool: asyncpg.Pool = await get_pool_fn()  # type: ignore[misc]
@@ -630,8 +684,18 @@ def register_tools(
         # Read thresholds dynamically per-call so tests + operators can flip
         # GBRAIN_SUPERSEDE_AUTO/HINT without restarting the service. Falls
         # back to PLAN defaults when env is unset.
-        auto_threshold = _supersede_threshold_env("GBRAIN_SUPERSEDE_AUTO", 0.85)
-        hint_threshold = _supersede_threshold_env("GBRAIN_SUPERSEDE_HINT", 0.70)
+        # Node D measurement (2026-08-30, 16110 pairs of the live corpus):
+        # max Jaccard across every pair is 0.568 and only ONE pair clears
+        # 0.40. The old 0.85 auto threshold was not "rarely hit", it was
+        # unreachable -- the auto branch had never fired once. Defaults now
+        # match the corpus: auto off (an unattended merge of two decisions
+        # is not something to guess at), hints from 0.35 where real
+        # duplicates actually live. Semantic near-duplicates are found by
+        # ``duplicate_candidates`` in recall-mcp, which runs on embeddings
+        # that only exist after the async ingest worker has processed the
+        # document -- so they cannot be checked here, on the write path.
+        auto_threshold = _supersede_threshold_env("GBRAIN_SUPERSEDE_AUTO", 0.0)
+        hint_threshold = _supersede_threshold_env("GBRAIN_SUPERSEDE_HINT", 0.35)
         if hint_threshold > auto_threshold and auto_threshold > 0:
             # Misconfigured: degrade to hint-only mode to avoid surprise
             # auto-mutations. Treat as auto disabled.
@@ -723,6 +787,7 @@ def register_tools(
                 "related": related or [],
                 "priority": "P2",
                 "is_latest": True,
+                "valid_from": now_ts,
                 "supersedes": supersedes_chain,
             }
             if declared_author is not None:
@@ -809,6 +874,11 @@ def register_tools(
                             scope,
                         )
                         for cand in auto_candidates:
+                            # Migration 007: the columns are what recall
+                            # filters on; frontmatter stays the canonical
+                            # mirror. Both move in the same statement so a
+                            # row can never read "current" in one and
+                            # "closed" in the other.
                             await conn.execute(
                                 """
                                 UPDATE documents
@@ -821,6 +891,9 @@ def register_tools(
                                         '{superseded_by}',
                                         to_jsonb($2::text)
                                     ),
+                                    is_latest = false,
+                                    valid_until = now(),
+                                    superseded_by = $2,
                                     updated_at = now()
                                 WHERE path = $1
                                 """,
@@ -884,6 +957,7 @@ def register_tools(
                     parsed_fm = _parse_frontmatter(existing_md) or {}
                     parsed_fm["is_latest"] = False
                     parsed_fm["superseded_by"] = rel_path
+                    parsed_fm["valid_until"] = now_ts
                     parsed_fm["updated"] = now_ts
                     # Recover body after the original frontmatter block.
                     body_part = existing_md
@@ -949,7 +1023,7 @@ def register_tools(
         # ------------------------------------------------------------------
         # Cache the timestamp once (M9) so created/updated never skew.
         now_ts = _now_iso()
-        fm = {
+        fm = _with_freshness({
             "type": "decision",
             "created": now_ts,
             "updated": now_ts,
@@ -957,7 +1031,7 @@ def register_tools(
             "tags": tags,
             "related": related or [],
             "priority": "P2",
-        }
+        })
         if declared_author is not None:
             fm["declared_author"] = declared_author
         content = _build_frontmatter(fm) + f"\n# {title}\n\n{body}\n"
@@ -1052,14 +1126,14 @@ def register_tools(
         rel_path = f"{path_prefix}/{slug}.md"
         abs_path = validate_path(rel_path, vault_root)
 
-        fm: dict[str, Any] = {
+        fm: dict[str, Any] = _with_freshness({
             "type": "runbook",
             "created": _now_iso(),
             "updated": _now_iso(),
             "agent": resolved_agent,
             "tags": tags,
             "related": [],
-        }
+        })
         if declared_author is not None:
             fm["declared_author"] = declared_author
         content = _build_frontmatter(fm) + f"\n# {title}\n\n{body}\n"
@@ -1116,7 +1190,7 @@ def register_tools(
         rel_path = f"{path_prefix}/{_today_iso()}-{slug}.md"
         abs_path = validate_path(rel_path, vault_root)
 
-        fm: dict[str, Any] = {
+        fm: dict[str, Any] = _with_freshness({
             "type": "error-pattern",
             "created": _now_iso(),
             "updated": _now_iso(),
@@ -1128,7 +1202,7 @@ def register_tools(
             "severity": severity,
             "trigger_condition": trigger_condition,
             "prevention_rule": prevention_rule,
-        }
+        })
         if declared_author is not None:
             fm["declared_author"] = declared_author
         content = _build_frontmatter(fm) + f"\n# {title}\n\n{body}\n"
@@ -1183,7 +1257,7 @@ def register_tools(
         rel_path = f"{path_prefix}/{safe_source}/{_today_iso()}-{slug}.md"
         abs_path = validate_path(rel_path, vault_root)
 
-        fm = {
+        fm = _with_freshness({
             "type": "external",
             "created": _now_iso(),
             "updated": _now_iso(),
@@ -1192,7 +1266,7 @@ def register_tools(
             "url": url,
             "tags": tags,
             "related": [],
-        }
+        })
         content = _build_frontmatter(fm) + f"\n# {title}\n\n{body}\n"
         content_hash = _sha256(content)
 
@@ -1251,14 +1325,14 @@ def register_tools(
         rel_path = _handoff_rel_path(scope, from_agent, to_agent)
         abs_path = validate_path(rel_path, vault_root)
 
-        fm = {
+        fm = _with_freshness({
             "type": "handoff",
             "created": _now_iso(),
             "updated": _now_iso(),
             "agent": resolved_agent,
             "tags": ["handoff"],
             "related": [],
-        }
+        })
         if declared_author is not None:
             fm["declared_author"] = declared_author
         content = _build_frontmatter(fm) + f"\n# {title}\n\n{body}\n"
@@ -1325,20 +1399,20 @@ def register_tools(
             new_content = existing_content.rstrip("\n") + "\n" + entry
         else:
             abs_path.parent.mkdir(parents=True, exist_ok=True)
-            fm = {
+            fm = _with_freshness({
                 "type": "daily",
                 "created": now_ts,
                 "updated": now_ts,
                 "agent": "system",
                 "tags": ["daily"],
-            }
+            })
             new_content = _build_frontmatter(fm) + f"\n# {today}\n" + entry
 
         content_hash = _sha256(new_content)
         abs_path.write_text(new_content, encoding="utf-8")
 
         # Upsert document row (daily logs are mutable -- append-only)
-        fm_for_db = {"type": "daily", "date": today}
+        fm_for_db = _with_freshness({"type": "daily", "date": today})
         doc_id, _ = await _upsert_document(
             pool, rel_path, fm_for_db, new_content, content_hash,
             "daily", resolved_agent,
@@ -1490,8 +1564,11 @@ def register_tools(
     ) -> str:
         """Create a new decision that supersedes an existing one.
 
-        The old decision remains immutable. The new one contains a
-        wikilink back to the old one.
+        The old decision's text is left untouched -- it stays readable as
+        the record of what was decided then -- but it is marked closed:
+        ``is_latest=false``, ``valid_until=now()``, ``superseded_by=<new
+        path>`` in both the row and its frontmatter. Recall serves only the
+        new one unless asked for superseded notes explicitly.
         """
         t0 = time.monotonic()
         pool: asyncpg.Pool = await get_pool_fn()  # type: ignore[misc]
@@ -1511,23 +1588,24 @@ def register_tools(
         supersedes_line = f"Supersedes [[{old_path}]]"
         full_body = f"{supersedes_line}\n\n**Reason:** {reason}\n\n{new_body}"
 
-        fm = {
+        now_ts = _now_iso()
+        fm = _with_freshness({
             "type": "decision",
-            "created": _now_iso(),
-            "updated": _now_iso(),
+            "created": now_ts,
+            "updated": now_ts,
             "agent": agent_ctx.agent,
             "tags": ["supersedes"],
             "related": [old_path],
             "priority": "P2",
-        }
+            "supersedes": [old_path],
+        })
         content = _build_frontmatter(fm) + f"\n# {new_title}\n\n{full_body}\n"
         content_hash = _sha256(content)
 
-        doc_id, changed = await _upsert_document(
-            pool, rel_path, fm, full_body, content_hash,
-            "decision", agent_ctx.agent,
+        existing_self = await pool.fetchrow(
+            "SELECT id, sha256 FROM documents WHERE path = $1", rel_path
         )
-        if not changed:
+        if existing_self is not None and existing_self["sha256"] == content_hash:
             await log_audit(
                 pool, agent_ctx.agent, "supersede_decision",
                 {"old": old_path, "new": rel_path}, "unchanged",
@@ -1535,16 +1613,221 @@ def register_tools(
             )
             return f"unchanged: {rel_path}"
 
+        # Read the old note's markdown before the transaction so its
+        # frontmatter can be rewritten once the DB side commits.
+        old_md: str | None = None
+        try:
+            old_md = old_abs.read_text(encoding="utf-8")
+        except OSError as exc:
+            logger.warning("Could not read superseded vault file %s: %s", old_path, exc)
+
+        # Before migration 007 this tool only wrote the new note and left a
+        # wikilink; the old decision stayed is_latest and recall kept
+        # serving it. Closing the old row is the whole point of an explicit
+        # supersede, so it happens in the same transaction as the insert.
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute(
+                    """
+                    INSERT INTO documents
+                        (path, frontmatter, body, sha256, source_type,
+                         agent, scope, valid_from)
+                    VALUES ($1, $2::jsonb, $3, $4, $5, $6, $7, COALESCE($8, now()))
+                    ON CONFLICT (path) DO UPDATE SET
+                        frontmatter = EXCLUDED.frontmatter,
+                        body = EXCLUDED.body,
+                        sha256 = EXCLUDED.sha256,
+                        source_type = EXCLUDED.source_type,
+                        agent = EXCLUDED.agent,
+                        scope = EXCLUDED.scope,
+                        updated_at = now()
+                    """,
+                    rel_path,
+                    _json_dumps(fm),
+                    full_body,
+                    content_hash,
+                    "decision",
+                    agent_ctx.agent,
+                    scope,
+                    _parse_iso_ts(fm.get("valid_from")),
+                )
+                await conn.execute(
+                    """
+                    UPDATE documents
+                    SET frontmatter = jsonb_set(
+                            jsonb_set(
+                                frontmatter,
+                                '{is_latest}',
+                                'false'::jsonb
+                            ),
+                            '{superseded_by}',
+                            to_jsonb($2::text)
+                        ),
+                        is_latest = false,
+                        valid_until = now(),
+                        superseded_by = $2,
+                        updated_at = now()
+                    WHERE path = $1
+                    """,
+                    old_path,
+                    rel_path,
+                )
+
         abs_path.parent.mkdir(parents=True, exist_ok=True)
         abs_path.write_text(content, encoding="utf-8")
 
-        await _queue_embedding(pool, doc_id)
+        if old_md is not None:
+            old_fm = _parse_frontmatter(old_md) or {}
+            old_fm["is_latest"] = False
+            old_fm["superseded_by"] = rel_path
+            old_fm["valid_until"] = now_ts
+            old_fm["updated"] = now_ts
+            body_part = old_md
+            if old_md.startswith("---"):
+                end_idx = old_md.find("---", 3)
+                if end_idx != -1:
+                    body_part = old_md[end_idx + 3 :]
+                    if body_part.startswith("\n"):
+                        body_part = body_part[1:]
+            try:
+                old_abs.write_text(
+                    _build_frontmatter(old_fm) + body_part, encoding="utf-8"
+                )
+            except OSError as exc:
+                logger.warning(
+                    "Could not rewrite superseded vault file %s: %s", old_path, exc
+                )
+
+        doc_id = await pool.fetchval(
+            "SELECT id FROM documents WHERE path = $1", rel_path
+        )
+        if isinstance(doc_id, int):
+            await _queue_embedding(pool, doc_id)
         await log_audit(
             pool, agent_ctx.agent, "supersede_decision",
-            {"old": old_path, "new": rel_path}, "ok",
+            {"old": old_path, "new": rel_path, "closed": True}, "ok",
             int((time.monotonic() - t0) * 1000),
         )
         return f"created: {rel_path} (supersedes {old_path})"
+
+    # ------------------------------------------------------------------
+    # 10. verify_note
+    # ------------------------------------------------------------------
+    @gated_tool("verify_note", annotations={"readOnlyHint": False})
+    async def verify_note(
+        path: str,
+        basis: str,
+        ctx: dict[str, object] | None = None,
+    ) -> str:
+        """Record that a note's claim was re-checked against reality.
+
+        Sets ``verified_at``, ``verified_by`` and ``basis`` on the note --
+        the only way those three fields are ever filled. Migration 007
+        deliberately left them NULL on all existing notes: nobody had
+        re-checked them, and a backdated stamp would have handed stale
+        facts a mark of confidence.
+
+        Args:
+            path: Vault-relative path of the note being verified.
+            basis: What the check actually was -- the command run, the log
+                line, the SQL, the artifact. Not "ok" or "looks right":
+                the point of the field is that a later reader can repeat
+                the check. Anything shorter than 8 characters is rejected.
+
+        Returns:
+            ``verified: <path>`` on success.
+        """
+        t0 = time.monotonic()
+        pool: asyncpg.Pool = await get_pool_fn()  # type: ignore[misc]
+        agent_ctx = await _authenticate_request(ctx, pool)
+
+        basis_clean = (basis or "").strip()
+        if len(basis_clean) < MIN_VERIFY_BASIS_LENGTH:
+            raise ValueError(
+                "basis must say how the fact was re-checked (command, log "
+                f"line, SQL, artifact) -- at least {MIN_VERIFY_BASIS_LENGTH} "
+                "characters. An unfalsifiable 'ok' is worse than leaving "
+                "the note unverified."
+            )
+
+        path = normalize_rel_path(path)
+        scope = _scope_from_path(path)
+        if not check_write_scope(agent_ctx, scope):
+            raise PermissionError(
+                f"Agent '{agent_ctx.agent}' cannot write to {scope}"
+            )
+        _assert_ops_subtree_owner(agent_ctx, path)
+
+        row = await pool.fetchrow(
+            "SELECT id, is_latest FROM documents WHERE path = $1", path
+        )
+        if row is None:
+            raise ValueError(f"Document not found: {path}")
+        if row["is_latest"] is False:
+            raise ValueError(
+                f"Refusing to verify a superseded note: {path}. Verify the "
+                "note that replaced it instead."
+            )
+
+        now_ts = _now_iso()
+        await pool.execute(
+            """
+            UPDATE documents
+            SET verified_at = now(),
+                verified_by = $2,
+                basis = $3,
+                frontmatter = frontmatter
+                    || jsonb_build_object(
+                           'verified_at', to_jsonb($4::text),
+                           'verified_by', to_jsonb($2::text),
+                           'basis', to_jsonb($3::text)
+                       ),
+                updated_at = now()
+            WHERE path = $1
+            """,
+            path,
+            agent_ctx.agent,
+            basis_clean,
+            now_ts,
+        )
+
+        # Mirror into the vault file -- it is canonical, so a rebuild from
+        # disk has to reproduce the stamp. Best-effort: the row is already
+        # committed, and a missing file must not lose the verification.
+        try:
+            abs_path = validate_path(path, vault_root)
+        except ValueError:
+            abs_path = None
+        if abs_path is not None and abs_path.exists():
+            try:
+                existing_md = abs_path.read_text(encoding="utf-8")
+                parsed_fm = _parse_frontmatter(existing_md) or {}
+                parsed_fm["verified_at"] = now_ts
+                parsed_fm["verified_by"] = agent_ctx.agent
+                parsed_fm["basis"] = basis_clean
+                parsed_fm["updated"] = now_ts
+                body_part = existing_md
+                if existing_md.startswith("---"):
+                    end_idx = existing_md.find("---", 3)
+                    if end_idx != -1:
+                        body_part = existing_md[end_idx + 3 :]
+                        if body_part.startswith("\n"):
+                            body_part = body_part[1:]
+                abs_path.write_text(
+                    _build_frontmatter(parsed_fm) + body_part, encoding="utf-8"
+                )
+            except OSError as exc:
+                logger.warning(
+                    "Could not mirror verification into vault file %s: %s",
+                    path, exc,
+                )
+
+        await log_audit(
+            pool, agent_ctx.agent, "verify_note",
+            {"path": path, "basis": basis_clean[:200]}, "ok",
+            int((time.monotonic() - t0) * 1000),
+        )
+        return f"verified: {path}"
 
     # ------------------------------------------------------------------
     # Slot tools (Postgres-only scratchpad, per-agent UNIQUE(agent, label))

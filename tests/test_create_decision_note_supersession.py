@@ -240,8 +240,12 @@ class TestCreateDecisionNoteSupersession:
         self, tmp_path: Path, monkeypatch
     ) -> None:
         """No nearby decision → return is plain 'created: ...' string."""
-        monkeypatch.delenv("GBRAIN_SUPERSEDE_AUTO", raising=False)
-        monkeypatch.delenv("GBRAIN_SUPERSEDE_HINT", raising=False)
+        # These cases exercise the branching mechanics, so they pin the
+        # thresholds the mechanics were written against. The shipped
+        # defaults changed with the node D measurement (auto off, hint
+        # 0.35) and are covered separately below.
+        monkeypatch.setenv("GBRAIN_SUPERSEDE_AUTO", "0.85")
+        monkeypatch.setenv("GBRAIN_SUPERSEDE_HINT", "0.70")
         pool = _make_pool()
         pool.decision_rows = [
             _row("30-decisions/2026-01-01-old.md", "wholly different content here"),
@@ -262,8 +266,12 @@ class TestCreateDecisionNoteSupersession:
         self, tmp_path: Path, monkeypatch
     ) -> None:
         """0.70 <= jaccard < 0.85 → JSON-encoded return with suggested_supersedes."""
-        monkeypatch.delenv("GBRAIN_SUPERSEDE_AUTO", raising=False)
-        monkeypatch.delenv("GBRAIN_SUPERSEDE_HINT", raising=False)
+        # These cases exercise the branching mechanics, so they pin the
+        # thresholds the mechanics were written against. The shipped
+        # defaults changed with the node D measurement (auto off, hint
+        # 0.35) and are covered separately below.
+        monkeypatch.setenv("GBRAIN_SUPERSEDE_AUTO", "0.85")
+        monkeypatch.setenv("GBRAIN_SUPERSEDE_HINT", "0.70")
         pool = _make_pool()
         # Title "shared" is tokenized into new doc. Old body has matching
         # tokens to push jaccard into [0.70, 0.85).
@@ -294,8 +302,12 @@ class TestCreateDecisionNoteSupersession:
         ``created: <path>`` string (NOT JSON). JSON shape is reserved for
         the hint band only.
         """
-        monkeypatch.delenv("GBRAIN_SUPERSEDE_AUTO", raising=False)
-        monkeypatch.delenv("GBRAIN_SUPERSEDE_HINT", raising=False)
+        # These cases exercise the branching mechanics, so they pin the
+        # thresholds the mechanics were written against. The shipped
+        # defaults changed with the node D measurement (auto off, hint
+        # 0.35) and are covered separately below.
+        monkeypatch.setenv("GBRAIN_SUPERSEDE_AUTO", "0.85")
+        monkeypatch.setenv("GBRAIN_SUPERSEDE_HINT", "0.70")
         pool = _make_pool()
         # identical body -> jaccard 1.0
         body = "alpha beta gamma delta epsilon zeta"
@@ -326,8 +338,12 @@ class TestCreateDecisionNoteSupersession:
         success return is the historical ``created: <path>`` string (H5).
         """
         import yaml
-        monkeypatch.delenv("GBRAIN_SUPERSEDE_AUTO", raising=False)
-        monkeypatch.delenv("GBRAIN_SUPERSEDE_HINT", raising=False)
+        # These cases exercise the branching mechanics, so they pin the
+        # thresholds the mechanics were written against. The shipped
+        # defaults changed with the node D measurement (auto off, hint
+        # 0.35) and are covered separately below.
+        monkeypatch.setenv("GBRAIN_SUPERSEDE_AUTO", "0.85")
+        monkeypatch.setenv("GBRAIN_SUPERSEDE_HINT", "0.70")
         pool = _make_pool()
         body = "alpha beta gamma delta epsilon zeta eta"
         pool.decision_rows = [
@@ -376,8 +392,12 @@ class TestCreateDecisionNoteSupersession:
         self, tmp_path: Path, monkeypatch
     ) -> None:
         """Only same-scope decisions are queried (SQL constraint)."""
-        monkeypatch.delenv("GBRAIN_SUPERSEDE_AUTO", raising=False)
-        monkeypatch.delenv("GBRAIN_SUPERSEDE_HINT", raising=False)
+        # These cases exercise the branching mechanics, so they pin the
+        # thresholds the mechanics were written against. The shipped
+        # defaults changed with the node D measurement (auto off, hint
+        # 0.35) and are covered separately below.
+        monkeypatch.setenv("GBRAIN_SUPERSEDE_AUTO", "0.85")
+        monkeypatch.setenv("GBRAIN_SUPERSEDE_HINT", "0.70")
         pool = _make_pool()
         # No same-scope rows even though there may be other scopes in DB.
         pool.decision_rows = []
@@ -397,8 +417,12 @@ class TestCreateDecisionNoteSupersession:
         self, tmp_path: Path, monkeypatch
     ) -> None:
         """SQL filter excludes is_latest=false candidates; tool sees only live rows."""
-        monkeypatch.delenv("GBRAIN_SUPERSEDE_AUTO", raising=False)
-        monkeypatch.delenv("GBRAIN_SUPERSEDE_HINT", raising=False)
+        # These cases exercise the branching mechanics, so they pin the
+        # thresholds the mechanics were written against. The shipped
+        # defaults changed with the node D measurement (auto off, hint
+        # 0.35) and are covered separately below.
+        monkeypatch.setenv("GBRAIN_SUPERSEDE_AUTO", "0.85")
+        monkeypatch.setenv("GBRAIN_SUPERSEDE_HINT", "0.70")
         pool = _make_pool()
         # The pool already filters via SQL -- simulate by NOT including the
         # superseded row in decision_rows. The tool must not see it.
@@ -422,8 +446,12 @@ class TestCreateDecisionNoteSupersession:
         Actual rollback semantics are covered by
         ``test_transaction_rolls_back_inserts_on_supersede_failure``.
         """
-        monkeypatch.delenv("GBRAIN_SUPERSEDE_AUTO", raising=False)
-        monkeypatch.delenv("GBRAIN_SUPERSEDE_HINT", raising=False)
+        # These cases exercise the branching mechanics, so they pin the
+        # thresholds the mechanics were written against. The shipped
+        # defaults changed with the node D measurement (auto off, hint
+        # 0.35) and are covered separately below.
+        monkeypatch.setenv("GBRAIN_SUPERSEDE_AUTO", "0.85")
+        monkeypatch.setenv("GBRAIN_SUPERSEDE_HINT", "0.70")
         pool = _make_pool()
         pool.fail_on_update = True
         body = "alpha beta gamma delta epsilon zeta"
@@ -452,8 +480,12 @@ class TestCreateDecisionNoteSupersession:
         documents that ran BEFORE the failing UPDATE must NOT appear in
         the pool's applied-state view after rollback.
         """
-        monkeypatch.delenv("GBRAIN_SUPERSEDE_AUTO", raising=False)
-        monkeypatch.delenv("GBRAIN_SUPERSEDE_HINT", raising=False)
+        # These cases exercise the branching mechanics, so they pin the
+        # thresholds the mechanics were written against. The shipped
+        # defaults changed with the node D measurement (auto off, hint
+        # 0.35) and are covered separately below.
+        monkeypatch.setenv("GBRAIN_SUPERSEDE_AUTO", "0.85")
+        monkeypatch.setenv("GBRAIN_SUPERSEDE_HINT", "0.70")
         pool = _make_pool()
         pool.fail_on_update = True
         body = "alpha beta gamma delta epsilon zeta"
@@ -484,8 +516,12 @@ class TestCreateDecisionNoteSupersession:
 
         Success return is ``created: <path>`` string (H5).
         """
-        monkeypatch.delenv("GBRAIN_SUPERSEDE_AUTO", raising=False)
-        monkeypatch.delenv("GBRAIN_SUPERSEDE_HINT", raising=False)
+        # These cases exercise the branching mechanics, so they pin the
+        # thresholds the mechanics were written against. The shipped
+        # defaults changed with the node D measurement (auto off, hint
+        # 0.35) and are covered separately below.
+        monkeypatch.setenv("GBRAIN_SUPERSEDE_AUTO", "0.85")
+        monkeypatch.setenv("GBRAIN_SUPERSEDE_HINT", "0.70")
         pool = _make_pool()
         body = "alpha beta gamma delta epsilon zeta eta theta"
         pool.decision_rows = [_row("30-decisions/2026-01-01-old.md", body)]
@@ -573,8 +609,12 @@ class TestC2NoSelfSupersession:
         not match the freshly-inserted row as its own auto-supersede
         candidate. No audit row may point a path back to itself.
         """
-        monkeypatch.delenv("GBRAIN_SUPERSEDE_AUTO", raising=False)
-        monkeypatch.delenv("GBRAIN_SUPERSEDE_HINT", raising=False)
+        # These cases exercise the branching mechanics, so they pin the
+        # thresholds the mechanics were written against. The shipped
+        # defaults changed with the node D measurement (auto off, hint
+        # 0.35) and are covered separately below.
+        monkeypatch.setenv("GBRAIN_SUPERSEDE_AUTO", "0.85")
+        monkeypatch.setenv("GBRAIN_SUPERSEDE_HINT", "0.70")
         pool = _make_pool()
         recorder, agent_ctx = _make_recorder(pool, str(tmp_path))
         body = "alpha beta gamma delta epsilon zeta"
@@ -622,8 +662,12 @@ class TestC4VaultRewrite:
         ``is_latest: false`` and ``superseded_by: <new-rel-path>``.
         """
         import yaml
-        monkeypatch.delenv("GBRAIN_SUPERSEDE_AUTO", raising=False)
-        monkeypatch.delenv("GBRAIN_SUPERSEDE_HINT", raising=False)
+        # These cases exercise the branching mechanics, so they pin the
+        # thresholds the mechanics were written against. The shipped
+        # defaults changed with the node D measurement (auto off, hint
+        # 0.35) and are covered separately below.
+        monkeypatch.setenv("GBRAIN_SUPERSEDE_AUTO", "0.85")
+        monkeypatch.setenv("GBRAIN_SUPERSEDE_HINT", "0.70")
         pool = _make_pool()
         body = "alpha beta gamma delta epsilon zeta eta"
         old_rel = "30-decisions/2026-01-01-old.md"
@@ -675,8 +719,12 @@ class TestC5Branch1Idempotency:
         being empty (after C2 filter), so identical content => no
         candidates => proceeds to branch 2/3 unchanged short-circuit.
         """
-        monkeypatch.delenv("GBRAIN_SUPERSEDE_AUTO", raising=False)
-        monkeypatch.delenv("GBRAIN_SUPERSEDE_HINT", raising=False)
+        # These cases exercise the branching mechanics, so they pin the
+        # thresholds the mechanics were written against. The shipped
+        # defaults changed with the node D measurement (auto off, hint
+        # 0.35) and are covered separately below.
+        monkeypatch.setenv("GBRAIN_SUPERSEDE_AUTO", "0.85")
+        monkeypatch.setenv("GBRAIN_SUPERSEDE_HINT", "0.70")
         pool = _make_pool()
         recorder, agent_ctx = _make_recorder(pool, str(tmp_path))
         body = "alpha beta gamma delta epsilon zeta"
