@@ -32,12 +32,21 @@ CORE_TOOLS_BY_SERVER: dict[str, frozenset[str]] = {
         "create_runbook_note",
         "create_error_pattern_note",
         "create_external_note",
+        # Freshness (migration 007): the only way verified_at/basis are
+        # ever filled. Gated out of core it would register nowhere -- every
+        # deployment runs the default "core" set -- and the semantic layer
+        # would stay permanently NULL.
+        "verify_note",
     }),
     "recall_mcp": frozenset({
         "recall",
         "get",
         "related",
         "recent",
+        # Read-only duplicate finder for memory hygiene. Runs off the
+        # embeddings the ingest worker already produced, so it costs one
+        # query and mutates nothing.
+        "duplicate_candidates",
     }),
     # Swarm has no "core-only" tools -- notify/ack are always-on instead.
     "swarm_mcp": frozenset(),

@@ -119,6 +119,7 @@ def _build_scope_filter(
     agent_filter: str | None,
     source_types: list[str] | None,
     param_offset: int,
+    include_superseded: bool = False,
 ) -> tuple[str, list[Any]]:
     """Build WHERE clause fragments for scope/agent/source_type filtering.
 
@@ -127,6 +128,9 @@ def _build_scope_filter(
         agent_filter: Optional agent name filter.
         source_types: Optional list of source_type values.
         param_offset: Starting $N parameter index.
+        include_superseded: When False (the default) closed notes are
+            excluded -- a superseded decision is a record of what was
+            believed then, not an answer to a question asked now.
 
     Returns:
         (sql_fragment, params) tuple.
@@ -134,6 +138,9 @@ def _build_scope_filter(
     clauses: list[str] = []
     params: list[Any] = []
     idx = param_offset
+
+    if not include_superseded:
+        clauses.append("d.is_latest")
 
     if scopes != ["*"]:
         clauses.append(f"d.scope = ANY(${idx}::text[])")
@@ -181,7 +188,7 @@ async def _vector_search(
 
     query = f"""
         SELECT c.id, c.doc_id, c.content, d.path, d.source_type,
-               d.scope, d.updated_at,
+               d.scope, d.updated_at, d.valid_from, d.verified_at,
                1 - (c.embedding <=> $1::vector) AS vec_score
         FROM chunks c
         JOIN documents d ON c.doc_id = d.id
@@ -225,7 +232,7 @@ async def _fts_search(
             SELECT websearch_to_tsquery('russian', $1) AS tsq
         )
         SELECT c.id, c.doc_id, c.content, d.path, d.source_type,
-               d.scope, d.updated_at,
+               d.scope, d.updated_at, d.valid_from, d.verified_at,
                ts_rank_cd(c.content_tsv, q.tsq) AS fts_score
         FROM chunks c
         JOIN documents d ON c.doc_id = d.id
@@ -283,6 +290,27 @@ def _effective_rrf_weights(
     )
 
 
+def _iso_or_none(value: Any) -> str | None:
+    """Render a timestamp column as ISO 8601, passing None through."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return str(value)
+
+
+def _row_get(row: Any, key: str) -> Any:
+    """Read an optional column off a record, or None when absent.
+
+    Test doubles and older callers hand back rows without the freshness
+    columns; a missing column must degrade to None, not raise.
+    """
+    try:
+        return row[key]
+    except (KeyError, IndexError, TypeError):
+        return None
+
+
 def _rrf_fuse(
     vec_rows: list[asyncpg.Record],
     fts_rows: list[asyncpg.Record],
@@ -323,6 +351,8 @@ def _rrf_fuse(
             "source_type": row["source_type"],
             "scope": row["scope"],
             "updated_at": row["updated_at"],
+            "valid_from": _row_get(row, "valid_from"),
+            "verified_at": _row_get(row, "verified_at"),
             "rrf": contribution,
         }
         # vec_score may be present on the row as 1 - cosine_distance
@@ -350,6 +380,8 @@ def _rrf_fuse(
                 "source_type": row["source_type"],
                 "scope": row["scope"],
                 "updated_at": row["updated_at"],
+                "valid_from": _row_get(row, "valid_from"),
+                "verified_at": _row_get(row, "verified_at"),
                 "rrf": contribution,
             }
             try:
@@ -454,8 +486,14 @@ def register_tools(
         scopes: list[str] | None = None,
         agent_filter: str | None = None,
         source_types: list[str] | None = None,
+        include_superseded: bool = False,
     ) -> list[dict[str, Any]]:
         """Hybrid search: vector + full-text with RRF fusion, source weights, temporal decay.
+
+        Superseded notes are excluded by default: a decision that has been
+        replaced is a record of what was believed then, and serving it
+        beside the current one is how a swarm ends up acting on a fact that
+        was retired months ago.
 
         Args:
             query: Search query text.
@@ -463,9 +501,15 @@ def register_tools(
             scopes: Scope filter list, or None / ["*"] for all scopes.
             agent_filter: Optional agent name to filter by.
             source_types: Optional list of source_type values to filter.
+            include_superseded: Set True to also return closed notes --
+                for auditing a chain or reconstructing what was believed
+                at some earlier point, not for everyday lookup.
 
         Returns:
-            Ranked list of {path, source_type, score, snippet, scope}.
+            Ranked list of {path, source_type, score, snippet, scope,
+            valid_from, verified_at}. ``verified_at`` is None when nobody
+            has re-checked the note since it was written -- read it as
+            "unconfirmed", not as "false".
         """
         if scopes is None:
             scopes = ["*"]
@@ -486,6 +530,7 @@ def register_tools(
             tuple(sorted(scopes)),
             agent_filter,
             source_key,
+            include_superseded,
         )
         cached = cache.get(cache_key)
         if cached is not None:
@@ -501,7 +546,8 @@ def register_tools(
 
         # Build filters (param offset 2 because $1 is vec/query)
         extra_where, extra_params = _build_scope_filter(
-            scopes, agent_filter, source_types, param_offset=2
+            scopes, agent_filter, source_types, param_offset=2,
+            include_superseded=include_superseded,
         )
 
         # Parallel vector + FTS search
@@ -539,6 +585,8 @@ def register_tools(
                 "score": round(final_score, 6),
                 "snippet": item["content"] or "",
                 "scope": item["scope"],
+                "valid_from": _iso_or_none(item.get("valid_from")),
+                "verified_at": _iso_or_none(item.get("verified_at")),
                 "_doc_id": item["doc_id"],
             })
 
@@ -790,6 +838,95 @@ def register_tools(
             "pending_jobs": pending_row["cnt"] if pending_row else 0,
             "total_chunks": chunks_row["cnt"] if chunks_row else 0,
         }
+
+    @gated_tool("duplicate_candidates", annotations={"readOnlyHint": True})
+    async def duplicate_candidates(
+        threshold: float = 0.55,
+        limit: int = 25,
+        scopes: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Find pairs of current notes that likely say the same thing.
+
+        The hygiene reviser, and deliberately NOT on the write path: a
+        note's embedding only exists after the ingest worker has processed
+        it, so nothing semantic can be judged at the moment of writing.
+        This runs later, over what is already indexed, and mutates nothing
+        -- it hands back pairs for a human to accept or reject.
+
+        Raw cosine is useless on this corpus: one author, one language, one
+        subject matter puts 16104 of 16110 document pairs above 0.80. What
+        works is subtracting the corpus mean vector first ("all-but-the-top"
+        centering), which cancels the shared direction and leaves only what
+        actually distinguishes two notes. Measured on the live vault
+        2026-08-30: centered max 0.723, and the pairs above 0.60 are real
+        duplicates and versions.
+
+        Args:
+            threshold: Minimum centered cosine similarity. 0.65 and up is
+                near-certainly a duplicate or a newer version of the same
+                note; 0.55-0.65 is worth a human look; below that is noise.
+            limit: Max pairs to return.
+            scopes: Restrict to these scopes, or None / ["*"] for every
+                scope the caller may read.
+
+        Returns:
+            Pairs ``{path_a, path_b, similarity, scope_a, scope_b}``,
+            most similar first. Superseded notes are excluded -- they have
+            already been dealt with.
+        """
+        if scopes is None:
+            scopes = ["*"]
+        pool = get_pool_fn()
+        agent_ctx = await _resolve_reader(pool)
+        scopes = restrict_read_scopes(agent_ctx, scopes)
+
+        threshold = max(0.0, min(1.0, float(threshold)))
+        limit = max(1, min(200, int(limit)))
+
+        scope_clause = ""
+        params: list[Any] = [threshold, limit]
+        if scopes != ["*"]:
+            scope_clause = " AND d.scope = ANY($3::text[])"
+            params.append(scopes)
+
+        rows = await pool.fetch(
+            f"""
+            WITH dv AS (
+                SELECT c.doc_id, avg(c.embedding) AS v
+                FROM chunks c
+                JOIN documents d ON d.id = c.doc_id
+                WHERE c.embedding IS NOT NULL
+                  AND d.is_latest{scope_clause}
+                GROUP BY c.doc_id
+            ),
+            gm AS (SELECT avg(v) AS m FROM dv),
+            dvc AS (
+                SELECT doc_id, (v - (SELECT m FROM gm)) AS v FROM dv
+            )
+            SELECT da.path AS path_a, db.path AS path_b,
+                   da.scope AS scope_a, db.scope AS scope_b,
+                   1 - (a.v <=> b.v) AS similarity
+            FROM dvc a
+            JOIN dvc b ON a.doc_id < b.doc_id
+            JOIN documents da ON da.id = a.doc_id
+            JOIN documents db ON db.id = b.doc_id
+            WHERE 1 - (a.v <=> b.v) >= $1
+            ORDER BY similarity DESC
+            LIMIT $2
+            """,
+            *params,
+        )
+
+        return [
+            {
+                "path_a": r["path_a"],
+                "path_b": r["path_b"],
+                "scope_a": r["scope_a"],
+                "scope_b": r["scope_b"],
+                "similarity": round(float(r["similarity"]), 3),
+            }
+            for r in rows
+        ]
 
     @gated_tool("reindex_check", annotations={"readOnlyHint": True})
     async def reindex_check() -> list[dict[str, str]]:

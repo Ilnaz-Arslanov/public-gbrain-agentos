@@ -108,8 +108,10 @@ def test_memory_all_tools_policy_includes_slots() -> None:
 
 
 def test_recall_core_tools_policy() -> None:
-    """Core mode allows recall, get, related, and recent only."""
-    core_recall = {"recall", "get", "related", "recent"}
+    """Core mode allows the four read tools plus the duplicate finder."""
+    core_recall = {
+        "recall", "get", "related", "recent", "duplicate_candidates",
+    }
     for name in core_recall:
         assert should_register_tool("recall_mcp", name, "core") is True
 
@@ -119,7 +121,10 @@ def test_recall_core_tools_policy() -> None:
 
 def test_recall_all_tools_policy_includes_stats() -> None:
     """All mode unlocks stats and reindex_check."""
-    for name in ["recall", "get", "related", "recent", "stats", "reindex_check"]:
+    for name in [
+        "recall", "get", "related", "recent", "duplicate_candidates",
+        "stats", "reindex_check",
+    ]:
         assert should_register_tool("recall_mcp", name, "all") is True
 
 
@@ -186,19 +191,24 @@ def test_recall_register_tools_core_skips_stats_reindex() -> None:
     rec = ToolRecorder()
     register_tools(rec, *_make_recall_args(), tool_set="core")
 
-    assert set(rec.registered.keys()) == {"recall", "get", "related", "recent"}
+    assert set(rec.registered.keys()) == {
+        "recall", "get", "related", "recent", "duplicate_candidates",
+    }
     assert "stats" not in rec.registered
     assert "reindex_check" not in rec.registered
 
 
 def test_recall_register_tools_all_registers_stats_reindex() -> None:
-    """register_tools(tool_set='all') must register all six recall tools."""
+    """register_tools(tool_set='all') must register every recall tool."""
     from services.recall_mcp.search import register_tools
 
     rec = ToolRecorder()
     register_tools(rec, *_make_recall_args(), tool_set="all")
 
-    expected = {"recall", "get", "related", "recent", "stats", "reindex_check"}
+    expected = {
+        "recall", "get", "related", "recent", "duplicate_candidates",
+        "stats", "reindex_check",
+    }
     assert set(rec.registered.keys()) == expected
 
 
@@ -208,7 +218,9 @@ def test_recall_register_tools_default_is_core() -> None:
 
     rec = ToolRecorder()
     register_tools(rec, *_make_recall_args())
-    assert set(rec.registered.keys()) == {"recall", "get", "related", "recent"}
+    assert set(rec.registered.keys()) == {
+        "recall", "get", "related", "recent", "duplicate_candidates",
+    }
 
 
 def test_recall_tool_kwargs_preserved() -> None:
@@ -218,6 +230,9 @@ def test_recall_tool_kwargs_preserved() -> None:
     rec = ToolRecorder()
     register_tools(rec, *_make_recall_args(), tool_set="all")
 
-    for name in ["recall", "get", "related", "recent", "stats", "reindex_check"]:
+    for name in [
+        "recall", "get", "related", "recent", "duplicate_candidates",
+        "stats", "reindex_check",
+    ]:
         annotations = rec.registered[name]["kwargs"].get("annotations") or {}
         assert annotations.get("readOnlyHint") is True

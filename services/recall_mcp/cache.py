@@ -6,7 +6,9 @@ from typing import Any
 DEFAULT_TTL_SEC = 90
 DEFAULT_MAX_ENTRIES = 64
 
-CacheKey = tuple[str, int, tuple[str, ...], str | None, tuple[str, ...] | None]
+CacheKey = tuple[
+    str, int, tuple[str, ...], str | None, tuple[str, ...] | None, bool
+]
 
 
 class RecallCache:
@@ -32,7 +34,8 @@ class RecallCache:
         """Get cached result if present and not expired.
 
         Args:
-            key: (query, limit, sorted_scopes, agent_filter, sorted_source_types_or_none).
+            key: (query, limit, sorted_scopes, agent_filter,
+                sorted_source_types_or_none, include_superseded).
 
         Returns:
             Cached result list or None if miss/expired.
@@ -54,7 +57,8 @@ class RecallCache:
         """Store a result in the cache, evicting LRU if full.
 
         Args:
-            key: (query, limit, sorted_scopes, agent_filter, sorted_source_types_or_none).
+            key: (query, limit, sorted_scopes, agent_filter,
+                sorted_source_types_or_none, include_superseded).
             value: List of result dicts to cache.
         """
         if key in self._store:

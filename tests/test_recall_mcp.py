@@ -471,12 +471,24 @@ def test_recall_cache_key_includes_source_types_sorted(
     assert keys[0][4] == ("decision", "runbook")
 
 
-def test_recall_public_signature_unchanged() -> None:
-    """recall() still accepts only query, limit, scopes, agent_filter, source_types."""
+def test_recall_public_signature_is_backward_compatible() -> None:
+    """The original five parameters keep their names, order and defaults.
+
+    ``include_superseded`` was appended by the freshness work (migration
+    007). Appending a keyword with a default is the only shape of change
+    allowed here: every existing caller keeps working untouched, and the
+    default preserves the pre-007 result set minus the notes that have
+    since been explicitly closed.
+    """
     recall_fn, _, _ = _capture_recall_tool()
     sig = inspect.signature(recall_fn)
     params = list(sig.parameters)
-    assert params == ["query", "limit", "scopes", "agent_filter", "source_types"]
+    assert params[:5] == ["query", "limit", "scopes", "agent_filter", "source_types"]
+    assert params == [
+        "query", "limit", "scopes", "agent_filter", "source_types",
+        "include_superseded",
+    ]
+    assert sig.parameters["include_superseded"].default is False
 
 
 # ---------------------------------------------------------------------------
