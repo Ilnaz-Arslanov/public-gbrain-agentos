@@ -14,7 +14,12 @@ from fastmcp import Context
 from services.shared.tool_gating import should_register_tool
 
 from .cache import CacheKey, RecallCache
-from .cross_link import expand_links, find_wikilinks
+from .cross_link import (
+    expand_links,
+    find_wikilinks,
+    link_forms,
+    resolve_link_paths,
+)
 from .source_weights import SOURCE_WEIGHTS, temporal_decay
 
 logger = logging.getLogger(__name__)
@@ -600,9 +605,10 @@ def register_tools(
             all_links.extend(find_wikilinks(r["snippet"]))
 
         if all_links:
+            link_paths = await resolve_link_paths(pool, all_links)
             adjacent = await expand_links(
                 pool,
-                all_links,
+                link_paths,
                 existing_ids,
                 scopes=scopes,
                 include_superseded=include_superseded,
@@ -722,23 +728,30 @@ def register_tools(
 
         fresh_clause = "" if include_superseded else " AND is_latest"
 
-        # Backlinks: docs that reference this path
+        # Backlinks: docs that reference this path. A note is linked
+        # both by full path and by bare slug, so all spellings count --
+        # matching the path alone hides most of the real backlinks.
         backlinks = await pool.fetch(
             f"""
             SELECT id, path, source_type, scope, updated_at,
                    substring(body, 1, 200) AS snippet
             FROM documents
-            WHERE (body LIKE '%[[' || $1 || ']]%'
-                   OR frontmatter::text LIKE '%' || $1 || '%')
-              AND id != $2{fresh_clause}
+            WHERE (EXISTS (
+                       SELECT 1 FROM unnest($1::text[]) AS f(form)
+                       WHERE body LIKE '%[[' || f.form || ']]%'
+                   )
+                   OR frontmatter::text LIKE '%' || $2 || '%')
+              AND id != $3{fresh_clause}
             ORDER BY updated_at DESC
             """,
+            link_forms(path),
             path,
             doc["id"],
         )
 
         # Forward link lookups
         forward_docs: list[asyncpg.Record] = []
+        forward_paths = await resolve_link_paths(pool, forward_paths)
         if forward_paths:
             forward_docs = await pool.fetch(
                 f"""

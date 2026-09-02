@@ -511,3 +511,81 @@ def test_resolve_reader_is_exported() -> None:
     from services.recall_mcp.search import _resolve_reader
 
     assert callable(_resolve_reader)
+
+
+# ---------------------------------------------------------------------------
+# Link resolution: a bare slug is how the swarm actually writes links
+# ---------------------------------------------------------------------------
+class _ResolvePool:
+    """Pool stand-in returning canned (cand, path) resolution rows."""
+
+    def __init__(self, rows: list[dict[str, str]]) -> None:
+        self.rows = rows
+        self.last_params: tuple[Any, ...] | None = None
+
+    async def fetch(self, query: str, *params: Any) -> list[dict[str, str]]:
+        self.last_params = params
+        return self.rows
+
+
+def test_find_wikilinks_ignores_shell_conditions() -> None:
+    """Bodies quote bash; `[[ -z "$X" ]]` is not a link to chase."""
+    from services.recall_mcp.cross_link import find_wikilinks
+
+    text = (
+        'if [[ -z "$TELEGRAM_BOT_TOKEN" ]]; then exit 1; fi\n'
+        "tr -d [[:space:]] and a real [[30-decisions/a.md]] link"
+    )
+    assert find_wikilinks(text) == ["30-decisions/a.md"]
+
+
+def test_link_forms_covers_path_file_and_slug() -> None:
+    """A note is referenced by full path, file name, or bare slug."""
+    from services.recall_mcp.cross_link import link_forms
+
+    assert link_forms("30-decisions/2026-09-02-x.md") == [
+        "30-decisions/2026-09-02-x.md",
+        "2026-09-02-x.md",
+        "2026-09-02-x",
+    ]
+
+
+def test_resolve_link_paths_maps_slug_onto_real_path() -> None:
+    """`[[slug]]` resolves to the one document whose path ends with it."""
+    from services.recall_mcp.cross_link import resolve_link_paths
+
+    pool = _ResolvePool([{"cand": "a.md", "path": "30-decisions/a.md"}])
+    got = asyncio.run(resolve_link_paths(pool, ["a"]))
+
+    assert got == ["30-decisions/a.md"]
+    # The slug is looked up with the .md suffix restored.
+    assert pool.last_params == (["a.md"],)
+
+
+def test_resolve_link_paths_drops_ambiguous_slug() -> None:
+    """Two documents ending with the slug: guessing is worse than skipping."""
+    from services.recall_mcp.cross_link import resolve_link_paths
+
+    pool = _ResolvePool([
+        {"cand": "a.md", "path": "30-decisions/a.md"},
+        {"cand": "a.md", "path": "70-runbooks/a.md"},
+    ])
+
+    assert asyncio.run(resolve_link_paths(pool, ["a"])) == []
+
+
+def test_resolve_link_paths_drops_dangling_link() -> None:
+    """A link to a note that does not exist resolves to nothing."""
+    from services.recall_mcp.cross_link import resolve_link_paths
+
+    assert asyncio.run(resolve_link_paths(_ResolvePool([]), ["ghost"])) == []
+
+
+def test_resolve_link_paths_empty_input_makes_no_query() -> None:
+    """No links, no round-trip to the database."""
+    from services.recall_mcp.cross_link import resolve_link_paths
+
+    pool = _ResolvePool([{"cand": "a.md", "path": "30-decisions/a.md"}])
+    assert asyncio.run(resolve_link_paths(pool, [])) == []
+    assert pool.last_params is None
+

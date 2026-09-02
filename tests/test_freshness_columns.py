@@ -722,8 +722,17 @@ class TestRecallPassesFiltersIntoExpansion:
             seen.update(kw)
             return []
 
+        async def _fake_resolve_links(_pool, links):
+            # Resolution is covered on its own; here it stands in for the
+            # database so the filter hand-off is what the test observes.
+            seen["links"] = links
+            return links
+
         monkeypatch.setattr("services.recall_mcp.search._vector_search", _fake_vector)
         monkeypatch.setattr("services.recall_mcp.search._fts_search", _fake_fts)
+        monkeypatch.setattr(
+            "services.recall_mcp.search.resolve_link_paths", _fake_resolve_links
+        )
         monkeypatch.setattr("services.recall_mcp.search.expand_links", _spy)
 
         tok = _RECALL_AUTH.set("Bearer test-token")
@@ -742,6 +751,12 @@ class TestRecallPassesFiltersIntoExpansion:
         assert seen["paths"] == ["30-decisions/closed.md"]
         assert seen["scopes"] == ["50-ops"]
         assert seen["include_superseded"] is False
+
+    def test_link_targets_are_resolved_before_expansion(self, monkeypatch) -> None:
+        """The raw link text goes through resolution, not straight to SQL."""
+        seen = self._run(monkeypatch, scopes=["50-ops"])
+
+        assert seen["links"] == ["30-decisions/closed.md"]
 
     def test_audit_flag_is_carried_through(self, monkeypatch) -> None:
         seen = self._run(monkeypatch, scopes=["50-ops"], include_superseded=True)
@@ -766,6 +781,10 @@ class TestRelatedHidesClosedNotes:
 
         async def fetch(self, query: str, *params: Any) -> list[Any]:
             self.calls.append((query, params))
+            if "AS c(cand)" in query:
+                # Link resolution: the body links to [[b.md]], which the
+                # vault stores under a scope directory.
+                return [{"cand": "b.md", "path": "30-decisions/b.md"}]
             return []
 
     def _related(self, monkeypatch, **kwargs: Any):
@@ -801,16 +820,36 @@ class TestRelatedHidesClosedNotes:
             _RECALL_AUTH.reset(tok)
         return pool
 
+    @staticmethod
+    def _result_queries(pool) -> list[str]:
+        """Queries that build the answer, minus the link-resolution lookup.
+
+        Resolution maps link text onto real paths and deliberately
+        carries no freshness or scope filter -- those belong to the
+        queries that return rows to the caller.
+        """
+        return [q for q, _p in pool.calls if "AS c(cand)" not in q]
+
     def test_backlinks_and_forward_links_filter_by_default(self, monkeypatch) -> None:
         pool = self._related(monkeypatch)
 
-        assert len(pool.calls) == 2  # backlinks + forward links
-        for query, _params in pool.calls:
+        queries = self._result_queries(pool)
+        assert len(queries) == 2  # backlinks + forward links
+        for query in queries:
             assert "is_latest" in query
 
     def test_include_superseded_drops_the_filter(self, monkeypatch) -> None:
         pool = self._related(monkeypatch, include_superseded=True)
 
-        assert pool.calls
-        for query, _params in pool.calls:
+        queries = self._result_queries(pool)
+        assert len(queries) == 2
+        for query in queries:
             assert "is_latest" not in query
+
+    def test_backlinks_match_slug_spellings(self, monkeypatch) -> None:
+        """A note linked as ``[[slug]]`` is still a backlink."""
+        pool = self._related(monkeypatch)
+
+        backlink_query, params = pool.calls[0]
+        assert "unnest($1::text[]) AS f(form)" in backlink_query
+        assert params[0] == ["a.md", "a"]
