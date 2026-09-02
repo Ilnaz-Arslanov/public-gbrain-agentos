@@ -593,3 +593,224 @@ class TestDuplicateCandidatesTool:
         _query, params = pool.calls[0]
         assert params[0] == 1.0
         assert params[1] == 200
+
+
+# ---------------------------------------------------------------------------
+# Link expansion: the neighbour obeys the same filters as the hit
+# ---------------------------------------------------------------------------
+class _LinkPool:
+    """Records the query and params expand_links issues."""
+
+    def __init__(self, rows: list[dict[str, Any]] | None = None) -> None:
+        self.calls: list[tuple[str, tuple[Any, ...]]] = []
+        self._rows = rows or []
+
+    async def fetch(self, query: str, *params: Any) -> list[dict[str, Any]]:
+        self.calls.append((query, params))
+        return self._rows
+
+
+def _link_row(path: str, scope: str = "30-decisions") -> dict[str, Any]:
+    return {
+        "id": 7,
+        "path": path,
+        "source_type": "decision",
+        "scope": scope,
+        "valid_from": datetime(2026, 8, 30, tzinfo=timezone.utc),
+        "verified_at": None,
+        "snippet": "body",
+    }
+
+
+class TestExpandLinksHonorsFreshnessAndScope:
+    """A wiki-link must not be a way around the recall filters."""
+
+    def test_closed_neighbour_is_filtered_by_default(self) -> None:
+        from services.recall_mcp.cross_link import expand_links
+
+        pool = _LinkPool()
+        asyncio.run(expand_links(pool, ["a.md"], set()))
+
+        query, _params = pool.calls[0]
+        assert "is_latest" in query
+
+    def test_include_superseded_drops_the_filter(self) -> None:
+        from services.recall_mcp.cross_link import expand_links
+
+        pool = _LinkPool()
+        asyncio.run(
+            expand_links(pool, ["a.md"], set(), include_superseded=True)
+        )
+
+        query, _params = pool.calls[0]
+        assert "is_latest" not in query
+
+    def test_scope_of_the_caller_is_enforced(self) -> None:
+        from services.recall_mcp.cross_link import expand_links
+
+        pool = _LinkPool()
+        asyncio.run(expand_links(pool, ["a.md"], set(), scopes=["50-ops"]))
+
+        query, params = pool.calls[0]
+        assert "scope = ANY($2::text[])" in query
+        assert params[1] == ["50-ops"]
+
+    def test_wildcard_scope_adds_no_filter(self) -> None:
+        from services.recall_mcp.cross_link import expand_links
+
+        pool = _LinkPool()
+        asyncio.run(expand_links(pool, ["a.md"], set(), scopes=["*"]))
+
+        query, params = pool.calls[0]
+        assert "scope = ANY" not in query
+        assert len(params) == 1
+
+    def test_neighbour_carries_the_freshness_columns(self) -> None:
+        """Same shape as a search hit -- an adjacent row is a result too."""
+        from services.recall_mcp.cross_link import expand_links
+
+        pool = _LinkPool([_link_row("a.md")])
+        got = asyncio.run(expand_links(pool, ["a.md"], set()))
+
+        assert got and "valid_from" in got[0] and "verified_at" in got[0]
+
+
+class TestRecallPassesFiltersIntoExpansion:
+    """The filters recall applies to hits must reach the expansion too."""
+
+    @staticmethod
+    def _stub_auth(monkeypatch) -> None:
+        async def _fake_resolve(_var, _pool, **_kwargs):
+            return AgentContext(
+                agent="nova", write_scopes=[], read_scopes=["50-ops"]
+            )
+
+        monkeypatch.setattr(
+            "services.recall_mcp.search.resolve_request_identity", _fake_resolve
+        )
+
+    @staticmethod
+    def _hit() -> dict[str, Any]:
+        return {
+            "id": 1,
+            "doc_id": 11,
+            "content": "a note pointing at [[30-decisions/closed.md]]",
+            "path": "50-ops/nova/30-decisions/open.md",
+            "source_type": "decision",
+            "scope": "50-ops",
+            "updated_at": datetime(2026, 9, 1, tzinfo=timezone.utc),
+            "valid_from": datetime(2026, 9, 1, tzinfo=timezone.utc),
+            "verified_at": None,
+            "vec_score": 0.9,
+        }
+
+    def _run(self, monkeypatch, **kwargs: Any) -> dict[str, Any]:
+        from tests.test_recall_mcp import _capture_recall_tool
+        from services.recall_mcp.search import _REQUEST_AUTH as _RECALL_AUTH
+
+        self._stub_auth(monkeypatch)
+        seen: dict[str, Any] = {}
+
+        async def _fake_vector(_pool, _vec, _where, _params, limit=50):
+            return [self._hit()]
+
+        async def _fake_fts(_pool, _query, _where, _params, limit=50):
+            return []
+
+        async def _spy(_pool, paths, _ids, **kw):
+            seen["paths"] = paths
+            seen.update(kw)
+            return []
+
+        monkeypatch.setattr("services.recall_mcp.search._vector_search", _fake_vector)
+        monkeypatch.setattr("services.recall_mcp.search._fts_search", _fake_fts)
+        monkeypatch.setattr("services.recall_mcp.search.expand_links", _spy)
+
+        tok = _RECALL_AUTH.set("Bearer test-token")
+        try:
+            recall_fn, _, _pool = _capture_recall_tool()
+            asyncio.run(recall_fn("anything", limit=5, **kwargs))
+        finally:
+            _RECALL_AUTH.reset(tok)
+        return seen
+
+    def test_readable_scopes_and_default_freshness_reach_expansion(
+        self, monkeypatch
+    ) -> None:
+        seen = self._run(monkeypatch, scopes=["50-ops"])
+
+        assert seen["paths"] == ["30-decisions/closed.md"]
+        assert seen["scopes"] == ["50-ops"]
+        assert seen["include_superseded"] is False
+
+    def test_audit_flag_is_carried_through(self, monkeypatch) -> None:
+        seen = self._run(monkeypatch, scopes=["50-ops"], include_superseded=True)
+
+        assert seen["include_superseded"] is True
+
+
+class TestRelatedHidesClosedNotes:
+    """``related`` promised the same freshness contract as ``recall``."""
+
+    class _Pool:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, tuple[Any, ...]]] = []
+
+        async def fetchrow(self, _query: str, *_params: Any) -> dict[str, Any]:
+            return {
+                "id": 1,
+                "body": "links to [[b.md]]",
+                "frontmatter": {},
+                "scope": "30-decisions",
+            }
+
+        async def fetch(self, query: str, *params: Any) -> list[Any]:
+            self.calls.append((query, params))
+            return []
+
+    def _related(self, monkeypatch, **kwargs: Any):
+        from services.recall_mcp.search import _REQUEST_AUTH as _RECALL_AUTH
+        from services.recall_mcp.search import register_tools as _register
+
+        async def _fake_resolve(_var, _pool, **_kwargs):
+            return AgentContext(agent="nova", write_scopes=[], read_scopes=["*"])
+
+        monkeypatch.setattr(
+            "services.recall_mcp.search.resolve_request_identity", _fake_resolve
+        )
+
+        class _Rec:
+            def __init__(self) -> None:
+                self.tools: dict[str, Any] = {}
+
+            def tool(self, **_kwargs: Any):
+                def deco(fn):
+                    self.tools[fn.__name__] = fn
+                    return fn
+                return deco
+
+        rec, pool = _Rec(), self._Pool()
+        _register(
+            rec, lambda: pool, lambda: None, lambda: None, lambda: None,
+            tool_set="core",
+        )
+        tok = _RECALL_AUTH.set("Bearer test-token")
+        try:
+            asyncio.run(rec.tools["related"](path="a.md", **kwargs))
+        finally:
+            _RECALL_AUTH.reset(tok)
+        return pool
+
+    def test_backlinks_and_forward_links_filter_by_default(self, monkeypatch) -> None:
+        pool = self._related(monkeypatch)
+
+        assert len(pool.calls) == 2  # backlinks + forward links
+        for query, _params in pool.calls:
+            assert "is_latest" in query
+
+    def test_include_superseded_drops_the_filter(self, monkeypatch) -> None:
+        pool = self._related(monkeypatch, include_superseded=True)
+
+        assert pool.calls
+        for query, _params in pool.calls:
+            assert "is_latest" not in query

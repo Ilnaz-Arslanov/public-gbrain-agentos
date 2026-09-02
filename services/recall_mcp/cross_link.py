@@ -46,29 +46,48 @@ async def expand_links(
     paths: list[str],
     existing_ids: set[int],
     adj_boost: float = 0.5,
+    scopes: list[str] | None = None,
+    include_superseded: bool = False,
 ) -> list[dict[str, Any]]:
     """Expand wiki-link paths into document records with boosted score.
+
+    The neighbour pulled in by a link obeys the same two rules as the
+    hit that named it: a closed note stays closed, and a scope the
+    caller may not read stays unread. Without them a link in a readable
+    note is a way around both filters.
 
     Args:
         pool: Asyncpg connection pool.
         paths: List of document paths to look up.
         existing_ids: Set of doc IDs already in results (to avoid duplicates).
         adj_boost: Score assigned to adjacent documents.
+        scopes: Scopes the caller may read, or None / ["*"] for all.
+        include_superseded: When False (the default) closed notes are
+            not pulled in as neighbours.
 
     Returns:
-        List of dicts with path, source_type, score, snippet, scope.
+        List of dicts with path, source_type, score, snippet, scope,
+        valid_from, verified_at.
     """
     if not paths:
         return []
 
+    clauses = ["path = ANY($1::text[])"]
+    params: list[Any] = [paths]
+    if not include_superseded:
+        clauses.append("is_latest")
+    if scopes is not None and scopes != ["*"]:
+        clauses.append(f"scope = ANY(${len(params) + 1}::text[])")
+        params.append(scopes)
+
     rows = await pool.fetch(
-        """
-        SELECT id, path, source_type, scope,
+        f"""
+        SELECT id, path, source_type, scope, valid_from, verified_at,
                substring(body, 1, 200) AS snippet
         FROM documents
-        WHERE path = ANY($1::text[])
+        WHERE {" AND ".join(clauses)}
         """,
-        paths,
+        *params,
     )
 
     results: list[dict[str, Any]] = []
@@ -81,6 +100,8 @@ async def expand_links(
             "score": adj_boost,
             "snippet": row["snippet"] or "",
             "scope": row["scope"],
+            "valid_from": row["valid_from"],
+            "verified_at": row["verified_at"],
         })
 
     return results

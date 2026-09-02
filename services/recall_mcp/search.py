@@ -600,7 +600,16 @@ def register_tools(
             all_links.extend(find_wikilinks(r["snippet"]))
 
         if all_links:
-            adjacent = await expand_links(pool, all_links, existing_ids)
+            adjacent = await expand_links(
+                pool,
+                all_links,
+                existing_ids,
+                scopes=scopes,
+                include_superseded=include_superseded,
+            )
+            for item in adjacent:
+                item["valid_from"] = _iso_or_none(item.get("valid_from"))
+                item["verified_at"] = _iso_or_none(item.get("verified_at"))
             results.extend(adjacent)
 
         # Clean internal fields
@@ -668,12 +677,19 @@ def register_tools(
     async def related(
         path: str,
         limit: int = 5,
+        include_superseded: bool = False,
     ) -> list[dict[str, Any]]:
         """Find documents related to a given path via wikilinks and backlinks.
+
+        Closed notes are left out by default, on the same grounds as in
+        ``recall``: a link to a retired decision is a record of what was
+        believed then, not a neighbour worth acting on now.
 
         Args:
             path: Document path to find relations for.
             limit: Max results to return.
+            include_superseded: Set True to also return closed notes --
+                for auditing a chain, not for everyday lookup.
 
         Returns:
             List of related documents sorted by updated_at.
@@ -704,15 +720,17 @@ def register_tools(
                 if isinstance(p, str) and p not in forward_paths
             )
 
+        fresh_clause = "" if include_superseded else " AND is_latest"
+
         # Backlinks: docs that reference this path
         backlinks = await pool.fetch(
-            """
+            f"""
             SELECT id, path, source_type, scope, updated_at,
                    substring(body, 1, 200) AS snippet
             FROM documents
             WHERE (body LIKE '%[[' || $1 || ']]%'
                    OR frontmatter::text LIKE '%' || $1 || '%')
-              AND id != $2
+              AND id != $2{fresh_clause}
             ORDER BY updated_at DESC
             """,
             path,
@@ -723,11 +741,11 @@ def register_tools(
         forward_docs: list[asyncpg.Record] = []
         if forward_paths:
             forward_docs = await pool.fetch(
-                """
+                f"""
                 SELECT id, path, source_type, scope, updated_at,
                        substring(body, 1, 200) AS snippet
                 FROM documents
-                WHERE path = ANY($1::text[]) AND id != $2
+                WHERE path = ANY($1::text[]) AND id != $2{fresh_clause}
                 """,
                 forward_paths,
                 doc["id"],
