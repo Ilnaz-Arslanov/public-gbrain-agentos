@@ -398,6 +398,36 @@ def _rrf_fuse(
     return merged
 
 
+def _dedupe_by_document(scored: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep the best-scoring chunk of each document.
+
+    Fusion is keyed by chunk, so a long note whose passages surface
+    twice comes back as two rows and eats two slots of ``limit``. The
+    caller asked for documents, not passages: the top-ranked chunk
+    represents its document and the rest are dropped.
+
+    Args:
+        scored: Results sorted by descending score.
+
+    Returns:
+        A new list in the same order, one entry per document. Rows
+        carrying no ``_doc_id`` are passed through untouched rather
+        than collapsed into one.
+    """
+    seen: set[Any] = set()
+    deduped: list[dict[str, Any]] = []
+    for item in scored:
+        doc_id = item.get('_doc_id')
+        if doc_id is None:
+            deduped.append(item)
+            continue
+        if doc_id in seen:
+            continue
+        seen.add(doc_id)
+        deduped.append(item)
+    return deduped
+
+
 def _diversify_by_scope(
     scored: list[dict[str, Any]],
     limit: int,
@@ -596,6 +626,7 @@ def register_tools(
             })
 
         scored.sort(key=lambda x: x["score"], reverse=True)
+        scored = _dedupe_by_document(scored)
         results = _diversify_by_scope(scored, limit, diversify_max)
 
         # Cross-link expansion (1-hop)

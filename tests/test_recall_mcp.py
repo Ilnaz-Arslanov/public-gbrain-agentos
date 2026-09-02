@@ -589,3 +589,45 @@ def test_resolve_link_paths_empty_input_makes_no_query() -> None:
     assert asyncio.run(resolve_link_paths(pool, [])) == []
     assert pool.last_params is None
 
+
+# ---------------------------------------------------------------------------
+# _dedupe_by_document: limit counts documents, not passages
+# ---------------------------------------------------------------------------
+def test_dedupe_by_document_keeps_best_scoring_chunk() -> None:
+    """Two chunks of one note collapse to the higher-scoring row."""
+    from services.recall_mcp.search import _dedupe_by_document
+
+    scored = [
+        {"path": "a.md", "score": 0.9, "_doc_id": 1},
+        {"path": "a.md", "score": 0.4, "_doc_id": 1},
+        {"path": "b.md", "score": 0.3, "_doc_id": 2},
+    ]
+    out = _dedupe_by_document(scored)
+
+    assert [r["path"] for r in out] == ["a.md", "b.md"]
+    assert out[0]["score"] == 0.9
+
+
+def test_dedupe_by_document_preserves_order() -> None:
+    """Deduplication must not reshuffle the ranking."""
+    from services.recall_mcp.search import _dedupe_by_document
+
+    scored = [
+        {"path": "a.md", "score": 0.9, "_doc_id": 1},
+        {"path": "b.md", "score": 0.8, "_doc_id": 2},
+        {"path": "a.md", "score": 0.7, "_doc_id": 1},
+        {"path": "c.md", "score": 0.6, "_doc_id": 3},
+    ]
+
+    assert [r["path"] for r in _dedupe_by_document(scored)] == [
+        "a.md", "b.md", "c.md",
+    ]
+
+
+def test_dedupe_by_document_passes_rows_without_doc_id() -> None:
+    """Rows carrying no _doc_id are not collapsed into a single one."""
+    from services.recall_mcp.search import _dedupe_by_document
+
+    scored = [{"path": "a.md"}, {"path": "b.md"}]
+
+    assert len(_dedupe_by_document(scored)) == 2
