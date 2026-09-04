@@ -1,13 +1,20 @@
 """Source type weights and temporal decay for recall scoring."""
 
+# Ordering rationale: a runbook answers "how do we do this" and is the source of
+# truth for repeated work, so it outranks a one-off decision. An error-pattern
+# still wins: not repeating a mistake beats knowing the procedure.
+# Every source_type written by memory-mcp must appear here -- a missing key
+# silently falls back to 1.0 in search.py, which is how handoff used to outrank
+# runbook. See tests/test_source_weights.py.
 SOURCE_WEIGHTS: dict[str, float] = {
     "error-pattern": 3.0,
+    "runbook": 2.5,
     "decision": 2.0,
-    "runbook": 1.5,
     "protocol": 1.5,
     "project": 1.2,
     "external": 1.0,
     "knowledge": 1.0,
+    "handoff": 0.8,  # addressed mail, not knowledge -- keep it out of the way
     "daily": 0.0,  # excluded from semantic search
 }
 
