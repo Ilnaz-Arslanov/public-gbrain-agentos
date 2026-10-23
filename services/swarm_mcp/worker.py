@@ -364,7 +364,9 @@ def _format_virtual_prompt(from_agent: str, to_agent: str, task_id: str, payload
         if is_to_coordinator:
             kind_hint = (
                 "retro-summary"
-                if str(title).startswith("Report from") or payload.get("_origin_task")
+                if str(title).startswith("Report from")
+                or payload.get("_origin_task")
+                or str(payload.get("_kind") or "").lower() == "report"
                 else "request to coordinator"
             )
         else:
@@ -406,8 +408,12 @@ def _format_virtual_prompt(from_agent: str, to_agent: str, task_id: str, payload
         f"---\n"
         f"ACTIONS:\n"
         f"1. Execute the task.\n"
-        f"2. Send the result back to the sender: swarm.notify(to_agent=\"{from_agent}\", "
-        f"payload with _kind=\"report\", title, body). Body format:\n"
+        f"2. Send the result back to the sender, exactly in this shape:\n"
+        f"   swarm.notify(to_agent=\"{from_agent}\", "
+        f"payload={{\"_kind\": \"report\", \"title\": \"...\", \"body\": \"...\"}})\n"
+        f"   Never drop \"_kind\": \"report\": without it your reply arrives as a new task "
+        f"and the sender is told to answer it, so the two of you loop.\n"
+        f"   Body format:\n"
         f"\n"
         f"   Task from {from_agent}: <short name>\n"
         f"\n"

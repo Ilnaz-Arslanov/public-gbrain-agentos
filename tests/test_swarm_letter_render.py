@@ -193,3 +193,24 @@ def test_coordinator_target_still_takes_ack_only_path() -> None:
     prompt = _format_virtual_prompt("cody", worker.COORDINATOR_AGENT, "t-2", {"title": "x"})
     assert "ack-only fast path" in prompt
     assert "DO NOT swarm.notify back" in prompt
+
+
+def test_task_letter_shows_literal_report_payload() -> None:
+    """The reply must carry ``_kind="report"``; a reply without it is a new task and loops."""
+    prompt = _format_virtual_prompt("cody", "archie", "t-7", {"title": "x"})
+    assert (
+        'swarm.notify(to_agent="cody", payload={"_kind": "report", "title": "...", "body": "..."})'
+        in prompt
+    )
+    assert 'Never drop "_kind": "report"' in prompt
+
+
+def test_report_to_coordinator_is_labelled_retro_summary() -> None:
+    """The coordinator gate runs before the report gate, so it must honour ``_kind`` itself."""
+    from services.swarm_mcp import worker
+
+    prompt = _format_virtual_prompt(
+        "archie", worker.COORDINATOR_AGENT, "t-8", {"title": "x", "_kind": "report"}
+    )
+    assert "(retro-summary)" in prompt
+    assert "request to coordinator" not in prompt
