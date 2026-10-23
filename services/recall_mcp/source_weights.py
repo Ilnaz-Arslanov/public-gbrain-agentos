@@ -16,6 +16,7 @@ SOURCE_WEIGHTS: dict[str, float] = {
     "knowledge": 1.0,
     "handoff": 0.8,  # addressed mail, not knowledge -- keep it out of the way
     "daily": 0.0,  # excluded from semantic search
+    "unknown": 1.0,  # note without a type in frontmatter: neutral, as the fallback was
 }
 
 # Hours thresholds for temporal decay buckets

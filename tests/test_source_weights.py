@@ -30,10 +30,10 @@ class TestSourceWeights:
     def test_every_written_source_type_has_a_weight(self) -> None:
         """No source_type that memory-mcp writes may rely on the 1.0 fallback."""
         source = _TOOLS_PY.read_text(encoding="utf-8")
-        written = {
-            t
-            for t in re.findall(r'["\'](decision|error-pattern|runbook|handoff|external|daily)["\']', source)
-        }
+        # Every literal the writers can store: frontmatter ``"type": "<x>"`` and the
+        # ``.get("type", "<default>")`` fallback used when a note has no type.
+        written = set(re.findall(r'["\']type["\']\s*:\s*["\']([a-z-]+)["\']', source))
+        written |= set(re.findall(r'\.get\(\s*["\']type["\']\s*,\s*["\']([a-z-]+)["\']', source))
         assert written, "no source types found in memory_mcp/tools.py -- check the pattern"
         missing = sorted(written - SOURCE_WEIGHTS.keys())
         assert not missing, f"source types written but not weighted: {missing}"
