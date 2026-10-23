@@ -409,7 +409,7 @@ def _format_virtual_prompt(from_agent: str, to_agent: str, task_id: str, payload
         f"ACTIONS:\n"
         f"1. Execute the task.\n"
         f"2. Send the result back to the sender, exactly in this shape:\n"
-        f"   swarm.notify(to_agent=\"{from_agent}\", "
+        f"   swarm.notify(to_agent={json.dumps(from_agent)}, "
         f"payload={{\"_kind\": \"report\", \"title\": \"...\", \"body\": \"...\"}})\n"
         f"   Never drop \"_kind\": \"report\": without it your reply arrives as a new task "
         f"and the sender is told to answer it, so the two of you loop.\n"

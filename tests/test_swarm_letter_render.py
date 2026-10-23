@@ -214,3 +214,9 @@ def test_report_to_coordinator_is_labelled_retro_summary() -> None:
     )
     assert "(retro-summary)" in prompt
     assert "request to coordinator" not in prompt
+
+
+def test_literal_notify_call_quotes_sender_name() -> None:
+    """A sender name with quotes must not break the call the receiver has to copy."""
+    prompt = _format_virtual_prompt('qa"west', "archie", "t-9", {"title": "x"})
+    assert 'swarm.notify(to_agent="qa\\"west", payload=' in prompt
