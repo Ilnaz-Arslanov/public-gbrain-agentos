@@ -309,6 +309,16 @@ def _render_payload_body_full(payload: dict) -> str:
     return "\n\n".join(parts)
 
 
+# Every letter carries chatId=OWNER_CHAT_ID (the gateway needs one), so the recipient sees the
+# swarm owner's chat in the envelope. Operator agents' bots have no dialog with that chat and
+# their replies failed with "400 chat not found" (archie, codystom, ruslan, 22-23.10.2026).
+_REPLY_ROUTE_NOTE = (
+    "   Chat replies go only to your own operator's chat (the one they write to you from). "
+    "The chat_id in this envelope is the swarm owner's: if that is not your operator, "
+    "your bot cannot reach it (400 chat not found).\n"
+)
+
+
 def _format_virtual_prompt(from_agent: str, to_agent: str, task_id: str, payload: dict) -> str:
     """Pack inter-agent payload into a chat-style prompt the agent will see.
 
@@ -367,8 +377,9 @@ def _format_virtual_prompt(from_agent: str, to_agent: str, task_id: str, payload
             f"ACTIONS (ack-only fast path, no dual-report):\n"
             f"1. Inspect payload and decide if action is needed. Coordinator targets "
             f"and smoke pings do not require a full chat report.\n"
-            f"2. If meaningful, send the owner a 1-3 line note via the chat gateway. "
+            f"2. If meaningful, tell your own operator in 1-3 lines in your own chat. "
             f"Otherwise skip.\n"
+            f"{_REPLY_ROUTE_NOTE}"
             f"3. DO NOT swarm.notify back (loop risk). Go straight to swarm.ack.\n"
             f"4. swarm.ack(task_id=\"{task_id}\")."
         )
@@ -382,8 +393,9 @@ def _format_virtual_prompt(from_agent: str, to_agent: str, task_id: str, payload
             f"---\n"
             f"ACTIONS (report — nothing to execute):\n"
             f"1. Read it. No task is attached; do not invent one.\n"
-            f"2. If it changes your plans or contradicts what you know, send the "
-            f"owner 1-3 lines. Otherwise skip the report.\n"
+            f"2. If it changes your plans or contradicts what you know, tell your own "
+            f"operator in 1-3 lines in your own chat. Otherwise skip the report.\n"
+            f"{_REPLY_ROUTE_NOTE}"
             f"3. swarm.ack(task_id=\"{task_id}\")."
         )
 
@@ -394,7 +406,8 @@ def _format_virtual_prompt(from_agent: str, to_agent: str, task_id: str, payload
         f"---\n"
         f"ACTIONS:\n"
         f"1. Execute the task.\n"
-        f"2. Send the owner a detailed chat report. Format:\n"
+        f"2. Send the result back to the sender: swarm.notify(to_agent=\"{from_agent}\", "
+        f"payload with _kind=\"report\", title, body). Body format:\n"
         f"\n"
         f"   Task from {from_agent}: <short name>\n"
         f"\n"
@@ -409,8 +422,10 @@ def _format_virtual_prompt(from_agent: str, to_agent: str, task_id: str, payload
         f"\n"
         f"   Time spent: <minutes or mm:ss>\n"
         f"\n"
-        f"   Avoid one-liner 'done, acked' reports. The owner wants substance, "
+        f"   Avoid one-liner 'done, acked' reports. The sender wants substance, "
         f"at least 5-10 lines.\n"
+        f"   If your operator should know, also tell them briefly in your own chat.\n"
+        f"{_REPLY_ROUTE_NOTE}"
         f"3. Call swarm.ack(task_id=\"{task_id}\") at the very end."
     )
 

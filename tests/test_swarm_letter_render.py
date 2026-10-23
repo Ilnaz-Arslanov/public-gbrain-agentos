@@ -145,8 +145,10 @@ def test_nested_structures_degrade_to_json() -> None:
 
 
 def test_letter_does_not_ask_for_coordinator_copy() -> None:
+    """The report goes back to the real sender only, never to a coordinator."""
     prompt = _format_virtual_prompt("cody", "daisy", "t-1", {"title": "x", "body": "y"})
-    assert "swarm.notify" not in prompt
+    assert 'swarm.notify(to_agent="cody"' in prompt
+    assert prompt.count("swarm.notify") == 1
     assert "coordinator" not in prompt.lower()
 
 
@@ -154,9 +156,34 @@ def test_letter_actions_are_task_report_ack() -> None:
     """Exactly three numbered steps remain, ack last."""
     prompt = _format_virtual_prompt("cody", "daisy", "t-1", {"title": "x", "body": "y"})
     assert "1. Execute the task." in prompt
-    assert "2. Send the owner a detailed chat report" in prompt
+    assert "2. Send the result back to the sender" in prompt
     assert '3. Call swarm.ack(task_id="t-1")' in prompt
     assert "4." not in prompt.split("ACTIONS:")[1]
+
+
+# ---------------------------------------------------------------------------
+# Every letter carries the swarm owner's chatId; operator agents' bots cannot
+# reach it and their replies failed with "400 chat not found" (22-23.10.2026).
+# Each kind of letter must say where chat replies go.
+# ---------------------------------------------------------------------------
+
+
+def test_every_letter_kind_states_reply_route() -> None:
+    from services.swarm_mcp import worker
+
+    task = _format_virtual_prompt("cody", "archie", "t-3", {"title": "x"})
+    report = _format_virtual_prompt("cody", "archie", "t-4", {"title": "x", "_kind": "report"})
+    ack = _format_virtual_prompt("cody", worker.COORDINATOR_AGENT, "t-5", {"title": "x"})
+    for prompt in (task, report, ack):
+        assert "your own operator's chat" in prompt
+        assert "400 chat not found" in prompt
+        assert "send the owner" not in prompt.lower()
+
+
+def test_report_letter_does_not_ask_to_notify_back() -> None:
+    prompt = _format_virtual_prompt("cody", "archie", "t-6", {"title": "x", "_kind": "report"})
+    assert "swarm.notify" not in prompt
+    assert '3. swarm.ack(task_id="t-6")' in prompt
 
 
 def test_coordinator_target_still_takes_ack_only_path() -> None:
